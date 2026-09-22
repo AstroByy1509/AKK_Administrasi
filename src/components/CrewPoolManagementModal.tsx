@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, UserPlus, Award, ShieldCheck, MapPin, Phone, Star, Edit, Trash2, X, CheckCircle2, Search, AlertCircle, Truck } from 'lucide-react';
+import { Users, UserPlus, Award, ShieldCheck, MapPin, Phone, Star, Edit, Trash2, X, CheckCircle2, Search, AlertCircle, AlertTriangle, Truck } from 'lucide-react';
 import { Crew } from '../types';
 import { logisticsStore } from '../services/store';
 
@@ -20,6 +20,7 @@ export const CrewPoolManagementModal: React.FC<CrewPoolManagementModalProps> = (
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
+  const [crewToDelete, setCrewToDelete] = useState<Crew | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -110,12 +111,12 @@ export const CrewPoolManagementModal: React.FC<CrewPoolManagementModalProps> = (
     onRefresh();
   };
 
-  const handleDelete = (id: string, name: string) => {
-    if (window.confirm(`Apakah Anda yakin ingin menghapus profil "${name}" dari database pool?`)) {
-      logisticsStore.deleteCrew(id);
-      logisticsStore.logActivity('Hapus Profil Kru', name, `Menghapus ID ${id} dari database pool`);
-      onRefresh();
-    }
+  const handleConfirmDelete = () => {
+    if (!crewToDelete) return;
+    logisticsStore.deleteCrew(crewToDelete.id);
+    logisticsStore.logActivity('Hapus Profil Kru', crewToDelete.name, `Menghapus ID ${crewToDelete.id} dari database pool (${crewToDelete.role})`);
+    setCrewToDelete(null);
+    onRefresh();
   };
 
   return (
@@ -225,7 +226,7 @@ export const CrewPoolManagementModal: React.FC<CrewPoolManagementModalProps> = (
                         <Edit className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => handleDelete(crew.id, crew.name)}
+                        onClick={() => setCrewToDelete(crew)}
                         className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950 text-slate-400 hover:text-rose-300 transition cursor-pointer"
                         title="Hapus Profil"
                       >
@@ -434,6 +435,88 @@ export const CrewPoolManagementModal: React.FC<CrewPoolManagementModalProps> = (
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Warning Konfirmasi Hapus Kru */}
+      {crewToDelete && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-5 border-b border-slate-800 bg-slate-950/50 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Konfirmasi Hapus Kru
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Penghapusan profil supir & helper dari database pool
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCrewToDelete(null)}
+                className="text-slate-400 hover:text-white rounded-lg p-1 hover:bg-slate-800 transition cursor-pointer text-base leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-rose-500/10 border border-rose-500/25 rounded-xl p-3.5 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-rose-300">
+                    Yakin ingin menghapus profil kru ini?
+                  </p>
+                  <p className="text-slate-300 leading-relaxed">
+                    Data kru supir/helper ini akan dihapus secara permanen dari database master pool logistik.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">{crewToDelete.name}</h4>
+                    <span className="text-xs text-slate-400">{crewToDelete.role}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    {crewToDelete.licenseType}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 border-t border-slate-800 pt-2 flex items-center justify-between">
+                  <span>Kontak: <strong className="text-white">{crewToDelete.phone}</strong></span>
+                  <span>Total Trip: <strong className="text-white">{crewToDelete.tripsCompleted}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/60 border-t border-slate-800 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCrewToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Ya, Hapus Kru</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

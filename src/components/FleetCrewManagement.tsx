@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Fuel,
   AlertCircle,
+  AlertTriangle,
   Phone,
   Award,
   Calendar,
@@ -53,6 +54,10 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
 
   const [isEditCrewOpen, setIsEditCrewOpen] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
+
+  // Delete Confirmation Modals and States
+  const [crewToDelete, setCrewToDelete] = useState<Crew | null>(null);
+  const [fleetToDelete, setFleetToDelete] = useState<Fleet | null>(null);
 
   // Default Tax & STNK Date Helper
   const getDefaultTaxDate = () => {
@@ -162,10 +167,8 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
     setEditingFleet(null);
   };
 
-  const handleDeleteFleetClick = (id: string, plateNumber: string) => {
-    if (confirm(`Apakah Anda yakin ingin menghapus armada dengan plat nomor ${plateNumber}?`)) {
-      logisticsStore.deleteFleet(id);
-    }
+  const handleDeleteFleetClick = (fleet: Fleet) => {
+    setFleetToDelete(fleet);
   };
 
   // Crew Edit & Delete Handlers
@@ -182,10 +185,22 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
     setEditingCrew(null);
   };
 
-  const handleDeleteCrewClick = (id: string, name: string) => {
-    if (confirm(`Apakah Anda yakin ingin menghapus kru bernama ${name}?`)) {
-      logisticsStore.deleteCrew(id);
-    }
+  const handleDeleteCrewClick = (crew: Crew) => {
+    setCrewToDelete(crew);
+  };
+
+  const handleConfirmDeleteCrew = () => {
+    if (!crewToDelete) return;
+    logisticsStore.deleteCrew(crewToDelete.id);
+    setCrews(logisticsStore.getCrews());
+    setCrewToDelete(null);
+  };
+
+  const handleConfirmDeleteFleet = () => {
+    if (!fleetToDelete) return;
+    logisticsStore.deleteFleet(fleetToDelete.id);
+    setFleets(logisticsStore.getFleets());
+    setFleetToDelete(null);
   };
 
   const toggleFleetStatus = (fleet: Fleet) => {
@@ -617,7 +632,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                     <span>Edit</span>
                   </button>
                   <button
-                    onClick={() => handleDeleteFleetClick(fleet.id, fleet.plateNumber)}
+                    onClick={() => handleDeleteFleetClick(fleet)}
                     className="px-3 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 font-medium flex items-center gap-1 transition cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -708,7 +723,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <span>Edit</span>
                 </button>
                 <button
-                  onClick={() => handleDeleteCrewClick(crew.id, crew.name)}
+                  onClick={() => handleDeleteCrewClick(crew)}
                   className="px-3 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 font-medium flex items-center gap-1 transition cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -1188,7 +1203,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   setIsEditCrewOpen(false);
                   setEditingCrew(null);
                 }}
-                className="text-slate-400 hover:text-white font-bold text-lg"
+                className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer"
               >
                 &times;
               </button>
@@ -1265,18 +1280,234 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                     setIsEditCrewOpen(false);
                     setEditingCrew(null);
                   }}
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow"
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow cursor-pointer"
                 >
                   Simpan Perubahan
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Warning Konfirmasi Hapus Kru Supir & Helper */}
+      {crewToDelete && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-delete-crew-title"
+        >
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            {/* Header Dialog */}
+            <div className="p-5 border-b border-slate-800/80 bg-slate-950/50 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 id="modal-delete-crew-title" className="text-base font-bold text-white">
+                    Konfirmasi Hapus Kru
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Penghapusan data Supir & Kernet / Helper
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCrewToDelete(null)}
+                className="text-slate-400 hover:text-white rounded-lg p-1.5 hover:bg-slate-800 transition cursor-pointer text-base leading-none"
+                aria-label="Tutup"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-5 space-y-4">
+              {/* Warning Notice Box */}
+              <div className="bg-rose-500/10 border border-rose-500/25 rounded-xl p-3.5 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-rose-300">
+                    Yakin ingin menghapus kru ini?
+                  </p>
+                  <p className="text-slate-300 leading-relaxed">
+                    Data kru supir/helper akan dihapus secara permanen dari sistem operasional armada PT Anugrah Kemasan Kreatif.
+                  </p>
+                </div>
+              </div>
+
+              {/* Kru Details Card */}
+              <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-blue-400 font-bold text-base shrink-0">
+                    {crewToDelete.name.substring(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-bold text-white truncate">{crewToDelete.name}</h4>
+                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
+                        crewToDelete.role === 'Driver Utama'
+                          ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                          : crewToDelete.role === 'Driver Cadangan'
+                          ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+                          : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                      }`}>
+                        {crewToDelete.role}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+                      <Phone className="w-3 h-3 text-slate-500" />
+                      <span>{crewToDelete.phone}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80 text-xs">
+                  <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Sertifikasi SIM</span>
+                    <span className="font-semibold text-emerald-400 text-xs mt-0.5 block">{crewToDelete.licenseType}</span>
+                    <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate">{crewToDelete.licenseNumber}</span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Total Penugasan</span>
+                    <span className="font-semibold text-white text-xs mt-0.5 block">{crewToDelete.tripsCompleted} Trip Sukses</span>
+                    <span className="text-[10px] text-amber-400 font-semibold mt-0.5 block">★ {crewToDelete.rating.toFixed(1)} / 5.0</span>
+                  </div>
+                </div>
+
+                {crewToDelete.status === 'on-duty' ? (
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <span><strong>Perhatian:</strong> Kru saat ini tercatat <strong>Sedang Jalan</strong>. Pastikan tugas armada telah dialihkan sebelum dihapus.</span>
+                  </div>
+                ) : (
+                  <div className="px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>Status Operasional:</span>
+                    <span className="font-semibold text-slate-300">
+                      {crewToDelete.status === 'available' ? '● Ready / Siap Jalan' : '○ Libur / Off'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="p-4 bg-slate-950/60 border-t border-slate-800 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCrewToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCrew}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Ya, Hapus Kru</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Warning Konfirmasi Hapus Armada Kendaraan */}
+      {fleetToDelete && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-delete-fleet-title"
+        >
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-5 border-b border-slate-800/80 bg-slate-950/50 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 id="modal-delete-fleet-title" className="text-base font-bold text-white">
+                    Konfirmasi Hapus Armada
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Penghapusan unit kendaraan logistik
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFleetToDelete(null)}
+                className="text-slate-400 hover:text-white rounded-lg p-1.5 hover:bg-slate-800 transition cursor-pointer text-base leading-none"
+                aria-label="Tutup"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-rose-500/10 border border-rose-500/25 rounded-xl p-3.5 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-rose-300">
+                    Yakin ingin menghapus armada ini?
+                  </p>
+                  <p className="text-slate-300 leading-relaxed">
+                    Unit kendaraan logistik ini akan dihapus dari daftar operasional aktif PT Anugrah Kemasan Kreatif.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Nomor Polisi</span>
+                    <h4 className="text-lg font-black text-white font-mono tracking-wider">{fleetToDelete.plateNumber}</h4>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                    {fleetToDelete.vehicleType}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-800/80">
+                  <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-800 text-[11px]">
+                    <span className="text-slate-400 text-[10px] block">Inisial Unit</span>
+                    <span className="font-bold text-white">{fleetToDelete.initialCode || '-'}</span>
+                  </div>
+                  <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-800 text-[11px]">
+                    <span className="text-slate-400 text-[10px] block">Merk / Tipe</span>
+                    <span className="font-bold text-white">{fleetToDelete.brand || '-'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/60 border-t border-slate-800 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setFleetToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteFleet}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Ya, Hapus Armada</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

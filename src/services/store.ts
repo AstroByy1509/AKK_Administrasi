@@ -55,7 +55,7 @@ import {
 
 const STORAGE_KEYS = {
   FLEETS: 'akk_fleets_v1',
-  CREWS: 'akk_crews_v1',
+  CREWS: 'akk_crews_v2',
   STORES: 'akk_stores_v1',
   SCHEDULES: 'akk_schedules_v1',
   DEVICES: 'akk_devices_v1',
@@ -133,6 +133,12 @@ class LogisticsStore {
       anonKey: '',
       isConnected: false
     });
+
+    // Auto-migrate crew pool to ensure all 19 drivers & helpers are loaded and legacy mock crews replaced
+    if (!this.crews || this.crews.length < 19 || this.crews.some(c => c.name === 'Agus Setiawan' || c.name === 'Slamet Riyadi' || c.name === 'Wahyu Nugroho')) {
+      this.crews = [...INITIAL_CREWS];
+      this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    }
 
     // Auto-migrate user profiles if the user name was changed
     let updatedUsers = false;
@@ -887,6 +893,7 @@ class LogisticsStore {
     };
     this.fleets = [...this.fleets, newFleet];
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+    this.notify();
     return newFleet;
   }
 
@@ -902,16 +909,23 @@ class LogisticsStore {
       return f;
     });
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+    this.notify();
   }
 
   public updateFleet(id: string, updatedFields: Partial<Fleet>) {
     this.fleets = this.fleets.map(f => (f.id === id ? { ...f, ...updatedFields } : f));
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+    this.notify();
   }
 
   public deleteFleet(id: string) {
+    const deletedFleet = this.fleets.find(f => f.id === id);
     this.fleets = this.fleets.filter(f => f.id !== id);
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+    if (deletedFleet) {
+      this.logActivity('Hapus Armada', deletedFleet.plateNumber, `Menghapus armada ${deletedFleet.plateNumber} (${deletedFleet.vehicleType})`);
+    }
+    this.notify();
   }
 
   public addCrew(crew: Omit<Crew, 'id' | 'tripsCompleted' | 'rating'>): Crew {
@@ -923,22 +937,31 @@ class LogisticsStore {
     };
     this.crews = [...this.crews, newCrew];
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    this.logActivity('Tambah Kru', newCrew.name, `Menambahkan kru baru ${newCrew.name} sebagai ${newCrew.role}`);
+    this.notify();
     return newCrew;
   }
 
   public updateCrewStatus(id: string, status: Crew['status']) {
     this.crews = this.crews.map(c => (c.id === id ? { ...c, status } : c));
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    this.notify();
   }
 
   public updateCrew(id: string, updatedFields: Partial<Crew>) {
     this.crews = this.crews.map(c => (c.id === id ? { ...c, ...updatedFields } : c));
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    this.notify();
   }
 
   public deleteCrew(id: string) {
+    const deletedCrew = this.crews.find(c => c.id === id);
     this.crews = this.crews.filter(c => c.id !== id);
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    if (deletedCrew) {
+      this.logActivity('Hapus Kru', deletedCrew.name, `Menghapus kru ${deletedCrew.name} (${deletedCrew.role}) dari sistem armada`);
+    }
+    this.notify();
   }
 
   public addStore(store: Omit<RetailStore, 'id'>): RetailStore {

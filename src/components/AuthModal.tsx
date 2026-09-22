@@ -221,13 +221,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </button>
 
                   <button
-                    onClick={() => handleQuickLogin('driver.agus@akk-packaging.co.id')}
+                    onClick={() => handleQuickLogin('driver.zainul@akk-packaging.co.id')}
                     className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition"
                   >
                     <div className="font-bold text-emerald-400 flex items-center gap-1">
                       <span>🚚 Supir / Driver</span>
                     </div>
-                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Agus Setiawan (Driver)</div>
+                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Zainul Agustiar (Driver)</div>
                   </button>
 
                   <button
