@@ -277,12 +277,12 @@ export const INITIAL_SPARE_PART_USAGES: SparePartUsage[] = [
     performedBy: 'Pak Hendra'
   },
 
-  // B 9241 UY (PU-01) - Penggantian Aki L300
+  // P 8125 VC (N1 / NP1) - Penggantian Aki L300
   {
     id: 'usg-05',
     fleetId: 'flt-01',
-    plateNumber: 'B 9241 UY',
-    initialCode: 'PU-01',
+    plateNumber: 'P 8125 VC',
+    initialCode: 'N1 / NP1',
     partId: 'sp-battery-02',
     partName: 'Aki Incoe Gold NS70 12V 65Ah',
     category: 'aki',

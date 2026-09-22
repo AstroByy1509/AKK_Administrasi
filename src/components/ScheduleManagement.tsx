@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2 } from 'lucide-react';
+import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Schedule, RetailStore, Fleet, Crew, ShipmentStatus, CrewDeliveryHistory } from '../types';
 import { logisticsStore } from '../services/store';
+import { ScheduleInitializerService } from '../services/scheduleInitializer';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
 import { AreaApprovalModal } from './AreaApprovalModal';
 import { CrewSimulationModal } from './CrewSimulationModal';
 import { CrewPoolManagementModal } from './CrewPoolManagementModal';
+import { OptimalRoutePlanningModal } from './OptimalRoutePlanningModal';
+import { OutboundGapMonitoringPanel } from './OutboundGapMonitoringPanel';
+import { NextDayReadinessPanel } from './NextDayReadinessPanel';
+import { SmartFillModal } from './SmartFillModal';
+import { SmartFillResult } from '../services/scheduleInitializer';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
@@ -49,6 +55,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [crews, setCrews] = useState<Crew[]>(logisticsStore.getCrews());
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedDayFilter, setSelectedDayFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('Semua Bulan');
   const [selectedYear, setSelectedYear] = useState<string>('2026');
@@ -57,6 +64,75 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [selectedManifest, setSelectedManifest] = useState<Schedule | null>(null);
   const [isCrewSimulationOpen, setIsCrewSimulationOpen] = useState(false);
   const [isCrewPoolOpen, setIsCrewPoolOpen] = useState(false);
+  const [isRouteOptimizerOpen, setIsRouteOptimizerOpen] = useState(false);
+  const [isSmartFillOpen, setIsSmartFillOpen] = useState(false);
+  const [autoInitMessage, setAutoInitMessage] = useState<string | null>(null);
+
+  // Helper to extract day of week from schedule
+  const getScheduleDayName = (sch: Schedule): string => {
+    if (sch.trackingNumber.includes('-SEN-') || sch.notes?.includes('Senin')) return 'Senin';
+    if (sch.trackingNumber.includes('-SEL-') || sch.notes?.includes('Selasa')) return 'Selasa';
+    if (sch.trackingNumber.includes('-RAB-') || sch.notes?.includes('Rabu')) return 'Rabu';
+    if (sch.trackingNumber.includes('-KAM-') || sch.notes?.includes('Kamis')) return 'Kamis';
+    if (sch.trackingNumber.includes('-JUM-') || sch.notes?.includes('Jumat')) return 'Jumat';
+    if (sch.trackingNumber.includes('-SAB-') || sch.notes?.includes('Sabtu')) return 'Sabtu';
+
+    if (sch.departureDate) {
+      const d = new Date(sch.departureDate);
+      if (!isNaN(d.getTime())) {
+        const dayIdx = d.getDay();
+        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+        return days[dayIdx] || 'Lainnya';
+      }
+    }
+    return 'Lainnya';
+  };
+
+  // Auto-initialize recurring weekly schedules on component mount if not yet present
+  useEffect(() => {
+    if (!ScheduleInitializerService.isWeeklyScheduleInitialized()) {
+      const result = ScheduleInitializerService.initializeWeeklySchedules({ weekOffset: 0 });
+      if (result.addedCount > 0) {
+        setAutoInitMessage(`Sistem otomatis menginisialisasi ${result.addedCount} rute pengiriman rutin (${result.outboundCount} Prioritas Luar Kota & ${result.localCount} Lokal) dengan proteksi jeda istirahat 24 jam.`);
+        setTimeout(() => setAutoInitMessage(null), 6000);
+      }
+    }
+  }, []);
+
+  const handleRunWeeklyAutoInit = (weekOffset: number = 0) => {
+    const result = ScheduleInitializerService.initializeWeeklySchedules({ weekOffset });
+    setSchedules(logisticsStore.getSchedules());
+    setStores(logisticsStore.getStores());
+    setCrews(logisticsStore.getCrews());
+    setFleets(logisticsStore.getFleets());
+    setAutoInitMessage(`Berhasil menginisialisasi ${result.addedCount} rute cerdas (${result.outboundCount} Luar Kota prioritas utama + ${result.localCount} Lokal diseimbangkan). Jeda istirahat supir minimum 24 jam terverifikasi aman!`);
+    setTimeout(() => setAutoInitMessage(null), 6000);
+  };
+
+  const handleRebalanceGaps = () => {
+    const result = ScheduleInitializerService.rebalanceExistingSchedulesWithGapRule();
+    setSchedules(logisticsStore.getSchedules());
+    if (result.violationsResolved > 0) {
+      setAutoInitMessage(`⚡ Berhasil menyeimbangkan jadwal! ${result.violationsResolved} supir yang berpotensi melanggar jeda 24 jam telah dialihkan ke kru cadangan.`);
+    } else {
+      setAutoInitMessage(`✅ Semua supir yang bertugas di rute luar kota sudah memenuhi standar jeda istirahat 24 jam.`);
+    }
+    setTimeout(() => setAutoInitMessage(null), 5000);
+  };
+
+  const handleSmartFillSuccess = (result: SmartFillResult) => {
+    setSchedules(logisticsStore.getSchedules());
+    setStores(logisticsStore.getStores());
+    setCrews(logisticsStore.getCrews());
+    setFleets(logisticsStore.getFleets());
+
+    if (result.isFullyCompliant) {
+      setAutoInitMessage(`⚡ Smart Fill Berhasil: ${result.addedCount} rute baru (${result.outboundCount} Luar Kota + ${result.localCount} Lokal) telah diisi secara otomatis dengan 100% kepatuhan jeda 24 jam.`);
+    } else {
+      setAutoInitMessage(`⚡ Smart Fill selesai (${result.addedCount} rute). Terdapat ${result.conflicts.length} jadwal yang memerlukan penyesuaian jeda.`);
+    }
+    setTimeout(() => setAutoInitMessage(null), 7000);
+  };
 
   // Area Approval Pop-up State
   const [areaApprovalModalData, setAreaApprovalModalData] = useState<{
@@ -152,6 +228,50 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       transitPort: defaultTransit,
       notes: isOuter ? 'Prioritas konfirmasi slot kapal penyeberangan logistik.' : 'Jalur tol Trans-Jawa reguler.'
     });
+    setIsAddScheduleOpen(true);
+  };
+
+  const handleApplyOptimalRoute = (recommended: {
+    storeId: string;
+    driverId: string;
+    helperId?: string;
+    fleetId: string;
+    cargoWeightTon: number;
+    notes: string;
+  }) => {
+    const targetStore = stores.find(s => s.id === recommended.storeId) || stores[0];
+    const isOuter = targetStore ? targetStore.island !== 'Jawa' : false;
+    let defaultTransit = '';
+    let defaultBooking = '';
+
+    if (targetStore?.island === 'Sumatera') {
+      defaultTransit = 'Pelabuhan Merak (Dermaga Eksekutif) -> Pelabuhan Bakauheni';
+      defaultBooking = 'ASDP-MRK-BKU-' + Math.floor(Math.random() * 90000 + 10000);
+    } else if (targetStore?.island === 'Bali & Nusa Tenggara') {
+      defaultTransit = 'Pelabuhan Ketapang Banyuwangi -> Pelabuhan Gilimanuk Bali';
+      defaultBooking = 'ASDP-KTP-GLM-' + Math.floor(Math.random() * 90000 + 10000);
+    } else if (targetStore?.island === 'Kalimantan' || targetStore?.island === 'Sulawesi') {
+      defaultTransit = 'Pelabuhan Tanjung Perak Surabaya -> Pelabuhan Tujuan (Kapal Ro-Ro)';
+      defaultBooking = 'KM-DHARMA-RORO-' + Math.floor(Math.random() * 90000 + 10000);
+    }
+
+    setNewSchedule({
+      trackingNumber: 'TRK-' + new Date().toISOString().substring(0, 10).replace(/-/g, '') + '-' + Math.floor(Math.random() * 900 + 100),
+      storeId: recommended.storeId,
+      fleetId: recommended.fleetId,
+      crewId: recommended.driverId,
+      crewHelperId: recommended.helperId || '',
+      status: 'scheduled' as ShipmentStatus,
+      departureDate: new Date().toISOString().substring(0, 16),
+      estimatedArrival: new Date(Date.now() + (isOuter ? 48 : 16) * 3600000).toISOString().substring(0, 16),
+      cargoDescription: 'FMCG & Consumer Goods Assorted Pallets',
+      cargoWeightTon: recommended.cargoWeightTon,
+      isInterIsland: isOuter,
+      ferryBookingCode: defaultBooking,
+      transitPort: defaultTransit,
+      notes: recommended.notes
+    });
+
     setIsAddScheduleOpen(true);
   };
 
@@ -333,6 +453,13 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
     // Fleet filter
     const matchesFleet = selectedFleetId === 'all' || sch.fleetId === selectedFleetId;
 
+    // Day filter
+    let matchesDay = true;
+    if (selectedDayFilter !== 'all') {
+      const schDay = getScheduleDayName(sch);
+      matchesDay = schDay === selectedDayFilter;
+    }
+
     // Date filter
     let matchesDate = true;
     const dateStr = sch.departureDate || sch.createdAt;
@@ -351,7 +478,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
       }
     }
 
-    return matchesStatus && matchesQuery && matchesFleet && matchesDate;
+    return matchesStatus && matchesQuery && matchesFleet && matchesDay && matchesDate;
   });
 
   return (
@@ -361,6 +488,23 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
           .no-print { display: none !important; }
         }
       `}</style>
+
+      {/* Auto-Initialization Success Banner */}
+      {autoInitMessage && (
+        <div className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 p-4 rounded-xl flex items-center justify-between gap-3 font-medium text-xs no-print shadow-lg animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400" />
+            <span>{autoInitMessage}</span>
+          </div>
+          <button
+            onClick={() => setAutoInitMessage(null)}
+            className="text-emerald-400 hover:text-white text-xs underline cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm no-print">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -373,25 +517,60 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               Manajemen Jadwal Pengiriman & Penugasan Armada
             </h2>
             <p className="text-slate-400 text-sm mt-1 max-w-2xl">
-              Penjadwalan pengiriman B2B dari Gudang Pusat Banyuwangi DC ke seluruh toko retail pelanggan, alokasi tonase armada otomatis, serta manajemen logistik tiket kapal penyeberangan antar-pulau.
+              Penjadwalan otomatis rute tetap mingguan (Senin s/d Sabtu) dari Gudang Pusat Banyuwangi DC, optimalisasi kru dan armada, serta tiket kapal penyeberangan.
             </p>
           </div>
 
           <div className="flex items-center gap-2.5 self-start lg:self-center flex-wrap">
             <button
-              onClick={() => setIsCrewPoolOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
+              onClick={() => setIsSmartFillOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-700/30 transition cursor-pointer ring-2 ring-emerald-400/40"
+              title="Fitur Smart Fill: Otomatis mengisi rute mingguan berulang (Senin-Sabtu) berdasarkan pola prioritas dengan validasi anti-bentrok H+1"
             >
-              <Users className="w-4 h-4" />
-              <span>Manajemen Data Pool</span>
+              <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
+              <span>⚡ Smart Fill Mingguan</span>
+            </button>
+
+            <button
+              onClick={() => handleRunWeeklyAutoInit(0)}
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-800/60 text-xs font-bold shadow-md transition cursor-pointer"
+              title="Penjadwalan cepat: Prioritas rute Luar Kota & seimbangkan rute lokal"
+            >
+              <CalendarCheck className="w-4 h-4 text-emerald-400" />
+              <span>Auto-Jadwal Cepat</span>
+            </button>
+
+            <button
+              onClick={handleRebalanceGaps}
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-800/60 text-xs font-bold shadow-md transition cursor-pointer"
+              title="Audit & selesaikan potensi pelanggaran jeda 24 jam dengan rotasi alternatif"
+            >
+              <Repeat className="w-4 h-4 text-purple-400" />
+              <span>Rebalance Jeda 24H</span>
+            </button>
+
+            <button
+              onClick={() => setIsRouteOptimizerOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 text-indigo-200 animate-pulse" />
+              <span>Optimal Route Planning</span>
+            </button>
+
+            <button
+              onClick={() => setIsCrewPoolOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold shadow-md transition cursor-pointer"
+            >
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span>Data Pool Kru</span>
             </button>
 
             <button
               onClick={() => setIsCrewSimulationOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
             >
-              <Users className="w-4 h-4" />
-              <span>Simulasi Driver & Helper</span>
+              <Repeat className="w-4 h-4" />
+              <span>Simulasi Siklus</span>
             </button>
 
             <button
@@ -401,23 +580,23 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Buat Jadwal Pengiriman Baru</span>
+              <span>Buat Manual</span>
             </button>
           </div>
         </div>
 
-        {/* Filter Bar */}
+        {/* Filter Bar: Status & Search */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-6 pt-6 border-t border-slate-800">
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 overflow-x-auto max-w-full">
             {['all', 'in_transit', 'scheduled', 'delivered', 'delayed'].map(st => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`px-3 py-1 rounded-md text-xs font-semibold capitalize transition ${
+                className={`px-3 py-1 rounded-md text-xs font-semibold capitalize transition cursor-pointer whitespace-nowrap ${
                   statusFilter === st ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {st === 'all' && 'Semua Jadwal'}
+                {st === 'all' && 'Semua Status'}
                 {st === 'in_transit' && 'Dalam Perjalanan'}
                 {st === 'scheduled' && 'Terjadwal'}
                 {st === 'delivered' && 'Selesai'}
@@ -435,6 +614,45 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
+          </div>
+        </div>
+
+        {/* Day-of-Week Filter Row (Senin - Sabtu) */}
+        <div className="mt-3 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 overflow-x-auto">
+            <span className="text-slate-400 text-[11px] font-bold px-2 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-indigo-400" />
+              <span>Filter Hari:</span>
+            </span>
+            <button
+              onClick={() => setSelectedDayFilter('all')}
+              className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                selectedDayFilter === 'all' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Semua Hari ({schedules.length})
+            </button>
+            {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map(d => {
+              const count = schedules.filter(s => getScheduleDayName(s) === d).length;
+              return (
+                <button
+                  key={d}
+                  onClick={() => setSelectedDayFilter(d)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                    selectedDayFilter === d ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>{d}</span>
+                  <span className={`text-[10px] px-1 rounded-full ${selectedDayFilter === d ? 'bg-indigo-800 text-indigo-100' : 'bg-slate-800 text-slate-400'}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-[11px] text-slate-400 flex items-center gap-2">
+            <span>Pola Rutin: <strong className="text-emerald-400 font-mono">36 Rute / Minggu</strong></span>
           </div>
         </div>
 
@@ -534,6 +752,28 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
         </div>
       </div>
 
+      {/* Panel Status Kesiapan Operasional Hari Berikutnya (Next Day Readiness) */}
+      <NextDayReadinessPanel
+        schedules={schedules}
+        crews={crews}
+        fleets={fleets}
+        onSchedulesUpdated={() => {
+          setSchedules(logisticsStore.getSchedules());
+          setCrews(logisticsStore.getCrews());
+        }}
+        onOpenSimulation={() => setIsCrewSimulationOpen(true)}
+        onSelectSchedule={(s) => setSelectedManifest(s)}
+      />
+
+      {/* Panel Eksklusif Monitoring Kiriman Luar Kota & Audit Jeda 24 Jam */}
+      <OutboundGapMonitoringPanel
+        schedules={schedules}
+        crews={crews}
+        fleets={fleets}
+        onOpenSimulation={() => setIsCrewSimulationOpen(true)}
+        onSelectSchedule={(s) => setSelectedManifest(s)}
+      />
+
       {/* Schedules Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm no-print">
         <div className="overflow-x-auto">
@@ -551,10 +791,32 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             <tbody className="divide-y divide-slate-800 text-slate-300">
               {filteredSchedules.map(sch => {
                 const isOuter = sch.isInterIsland;
+                const dayName = getScheduleDayName(sch);
 
                 return (
                   <tr key={sch.id} className="hover:bg-slate-800/40 transition">
                     <td className="p-4">
+                      <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                        {dayName !== 'Lainnya' && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {dayName}
+                          </span>
+                        )}
+                        {sch.notes?.includes('Susulan') ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Susulan
+                          </span>
+                        ) : sch.notes?.includes('Grosir') ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Grosir
+                          </span>
+                        ) : isOuter ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Inter-Island
+                          </span>
+                        ) : null}
+                        <span className="text-[10px] font-mono text-slate-500">{sch.trackingNumber}</span>
+                      </div>
                       <div className="font-semibold text-white">{sch.store?.storeName || AREA_MAP[sch.storeId] || 'Toko Retail'}</div>
                       <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <MapPin className="w-3 h-3 text-slate-500" />
@@ -1062,6 +1324,23 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
         onClose={() => setIsCrewPoolOpen(false)}
         crews={crews}
         onRefresh={() => setCrews(logisticsStore.getCrews())}
+      />
+
+      {/* Optimal Route Planning Modal */}
+      <OptimalRoutePlanningModal
+        isOpen={isRouteOptimizerOpen}
+        onClose={() => setIsRouteOptimizerOpen(false)}
+        crews={crews}
+        fleets={fleets}
+        stores={stores}
+        onApplyRecommendation={handleApplyOptimalRoute}
+      />
+
+      {/* Smart Fill Mingguan Modal */}
+      <SmartFillModal
+        isOpen={isSmartFillOpen}
+        onClose={() => setIsSmartFillOpen(false)}
+        onSuccess={handleSmartFillSuccess}
       />
     </div>
   );

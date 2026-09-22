@@ -139,7 +139,7 @@ export class RouteOptimizerService {
       routeExperienceKeywords.some(kw => exp.toLowerCase().includes(kw.toLowerCase()))
     );
 
-    let routeExpScore = Math.min(100, (driverRouteTrips.length * 15) + (driverHasExpBadge ? 35 : 10));
+    let routeExperienceScore = Math.min(100, (driverRouteTrips.length * 15) + (driverHasExpBadge ? 35 : 10));
 
     // 2. Speed & On-Time History Score
     const onTimeDriverTrips = driverRouteTrips.filter(h => h.onTimeStatus === 'Tepat Waktu' || h.onTimeStatus === 'Lebih Cepat');
@@ -191,19 +191,19 @@ export class RouteOptimizerService {
     let overallScore = 0;
     switch (params.priority) {
       case 'fastest_time':
-        overallScore = (speedHistoryScore * 0.45) + (routeExpScore * 0.30) + (workloadScore * 0.15) + (vehicleMatchScore * 0.10);
+        overallScore = (speedHistoryScore * 0.45) + (routeExperienceScore * 0.30) + (workloadScore * 0.15) + (vehicleMatchScore * 0.10);
         break;
       case 'balanced_workload':
-        overallScore = (workloadScore * 0.45) + (speedHistoryScore * 0.25) + (routeExpScore * 0.20) + (vehicleMatchScore * 0.10);
+        overallScore = (workloadScore * 0.45) + (speedHistoryScore * 0.25) + (routeExperienceScore * 0.20) + (vehicleMatchScore * 0.10);
         break;
       case 'route_experience':
-        overallScore = (routeExpScore * 0.50) + (speedHistoryScore * 0.25) + (workloadScore * 0.15) + (vehicleMatchScore * 0.10);
+        overallScore = (routeExperienceScore * 0.50) + (speedHistoryScore * 0.25) + (workloadScore * 0.15) + (vehicleMatchScore * 0.10);
         break;
       case 'fuel_cost_efficient':
-        overallScore = (vehicleMatchScore * 0.40) + (workloadScore * 0.30) + (speedHistoryScore * 0.20) + (routeExpScore * 0.10);
+        overallScore = (vehicleMatchScore * 0.40) + (workloadScore * 0.30) + (speedHistoryScore * 0.20) + (routeExperienceScore * 0.10);
         break;
       default:
-        overallScore = (speedHistoryScore * 0.30) + (workloadScore * 0.30) + (routeExpScore * 0.25) + (vehicleMatchScore * 0.15);
+        overallScore = (speedHistoryScore * 0.30) + (workloadScore * 0.30) + (routeExperienceScore * 0.25) + (vehicleMatchScore * 0.15);
     }
 
     overallScore = Math.min(99.8, Math.max(70.0, Number(overallScore.toFixed(1))));

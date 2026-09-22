@@ -434,12 +434,20 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <div className="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/80 flex items-center justify-between">
                     <div>
                       <span className="text-slate-400 text-[11px]">GPS Tracksolid:</span>
-                      <div className="font-mono text-slate-200 text-[11px] font-semibold">{fleet.gpsImei || 'GPS Terpasang'}</div>
+                      <div className="font-mono text-slate-200 text-[11px] font-semibold">
+                        {fleet.gpsImei && fleet.gpsImei.trim() !== '-' && fleet.gpsImei.trim() !== '' ? fleet.gpsImei : '- (Non-GPS)'}
+                      </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Online
-                    </span>
+                    {fleet.gpsImei && fleet.gpsImei.trim() !== '-' && fleet.gpsImei.trim() !== '' ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Online
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1">
+                        Non-GPS
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
@@ -741,10 +749,10 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: B 9421 UXT"
+                    placeholder="Contoh: P 8125 VC"
                     value={newFleet.plateNumber}
-                    onChange={(e) => setNewFleet({ ...newFleet, plateNumber: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono"
+                    onChange={(e) => setNewFleet({ ...newFleet, plateNumber: e.target.value.toUpperCase() })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono uppercase"
                   />
                 </div>
                 <div>
@@ -764,11 +772,10 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">IMEI GPS Tracksolid</label>
+                  <label className="text-slate-400 block mb-1">IMEI GPS Tracksolid (Opsional)</label>
                   <input
                     type="text"
-                    required
-                    placeholder="868204..."
+                    placeholder="868204... (atau - jika Non-GPS)"
                     value={newFleet.gpsImei}
                     onChange={(e) => setNewFleet({ ...newFleet, gpsImei: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono"
@@ -779,7 +786,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: WB-01, DS-1, N08"
+                    placeholder="Contoh: N1 / NP1, WB-01, DS-1"
                     value={newFleet.initialCode}
                     onChange={(e) => setNewFleet({ ...newFleet, initialCode: e.target.value.toUpperCase() })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono uppercase"
@@ -807,7 +814,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: 2500 CC"
+                    placeholder="Contoh: 2477 CC"
                     value={newFleet.engineCc}
                     onChange={(e) => setNewFleet({ ...newFleet, engineCc: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
@@ -823,7 +830,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                     onChange={(e) => setNewFleet({ ...newFleet, year: parseInt(e.target.value) })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   >
-                    {Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                    {Array.from({ length: new Date().getFullYear() - 1990 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => (
                       <option key={y} value={y}>{y}</option>
                     ))}
                   </select>
@@ -1040,11 +1047,10 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">IMEI GPS Tracksolid</label>
+                  <label className="text-slate-400 block mb-1">IMEI GPS Tracksolid (Opsional)</label>
                   <input
                     type="text"
-                    required
-                    placeholder="Contoh: 868204059..."
+                    placeholder="Contoh: 868204... (atau kosongkan jika Non-GPS)"
                     value={editingFleet.gpsImei || ''}
                     onChange={(e) => setEditingFleet({ ...editingFleet, gpsImei: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono"
@@ -1055,7 +1061,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: WB-01, DS-1, N08"
+                    placeholder="Contoh: N1 / NP1, WB-01, DS-1"
                     value={editingFleet.initialCode || ''}
                     onChange={(e) => setEditingFleet({ ...editingFleet, initialCode: e.target.value.toUpperCase() })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-mono uppercase"
@@ -1083,7 +1089,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: 2500 CC"
+                    placeholder="Contoh: 2477 CC"
                     value={editingFleet.engineCc || ''}
                     onChange={(e) => setEditingFleet({ ...editingFleet, engineCc: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
@@ -1099,7 +1105,7 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                     onChange={(e) => setEditingFleet({ ...editingFleet, year: parseInt(e.target.value) })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   >
-                    {Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                    {Array.from({ length: new Date().getFullYear() - 1990 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => (
                       <option key={y} value={y}>{y}</option>
                     ))}
                   </select>

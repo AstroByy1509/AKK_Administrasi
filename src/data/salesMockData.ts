@@ -106,7 +106,7 @@ export const INITIAL_ADMIN_ACTIVITIES: AdminActivity[] = [
     clientName: 'PT Indomarco Prismatama (DC Ancol)',
     timestamp: '2026-09-17T09:30:00Z',
     status: 'completed',
-    notes: 'Surat Jalan DO/AKK/2026/09/1402 diterbitkan untuk truk B 9421 UXT (25.000 pcs box).',
+    notes: 'Surat Jalan DO/AKK/2026/09/1402 diterbitkan untuk armada P 8125 VC (25.000 pcs box).',
     durationMinutes: 15
   },
   {
@@ -214,7 +214,7 @@ export const INITIAL_LOADING_RECORDS: LoadingDurationRecord[] = [
     id: 'load-001',
     doNumber: 'DO/AKK/2026/09/1401',
     clientName: 'PT Indomarco Prismatama',
-    fleetPlate: 'B 9421 UXT',
+    fleetPlate: 'P 8125 VC',
     adminPic: 'Budi Santoso',
     cargoType: 'Karton Box Corrugated (A1) 5-Ply',
     quantityBoxes: 25000,
