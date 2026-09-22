@@ -1,0 +1,6 @@
+{
+  "name": "AKK Logistics & Sales Management - PT Anugrah Kemasan Kreatif",
+  "description": "Sistem terpadu operasional logistik, distribusi kemasan karton box, pajak STNK, manajemen stok sparepart rutin (oli, ban, aki), efisiensi konsumsi BBM armada, dan aktivitas admin penjualan PT Anugrah Kemasan Kreatif (AKK).",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
