@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers } from 'lucide-react';
+import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Schedule, RetailStore, Fleet, Crew, ShipmentStatus, CrewDeliveryHistory } from '../types';
 import { logisticsStore } from '../services/store';
@@ -13,6 +13,7 @@ import { OutboundGapMonitoringPanel } from './OutboundGapMonitoringPanel';
 import { NextDayReadinessPanel } from './NextDayReadinessPanel';
 import { SmartFillModal } from './SmartFillModal';
 import { SmartFillResult } from '../services/scheduleInitializer';
+import { WeeklyRoutePlanner } from './WeeklyRoutePlanner';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
@@ -67,6 +68,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [isRouteOptimizerOpen, setIsRouteOptimizerOpen] = useState(false);
   const [isSmartFillOpen, setIsSmartFillOpen] = useState(false);
   const [autoInitMessage, setAutoInitMessage] = useState<string | null>(null);
+  const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner'>('schedules_list');
 
   // Helper to extract day of week from schedule
   const getScheduleDayName = (sch: Schedule): string => {
@@ -574,6 +576,19 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             </button>
 
             <button
+              onClick={() => setActiveMainTab('weekly_planner')}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold shadow-md transition cursor-pointer ${
+                activeMainTab === 'weekly_planner'
+                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white ring-2 ring-purple-400/50'
+                  : 'bg-purple-950/60 hover:bg-purple-900/60 text-purple-200 border border-purple-700/60'
+              }`}
+              title="Buka Planner Rute Mingguan berdasarkan simulasi dengan fitur drag-and-drop antar kru dan armada"
+            >
+              <Move className="w-4 h-4 text-purple-300" />
+              <span>Planner Rute (Drag & Drop)</span>
+            </button>
+
+            <button
               onClick={() => {
                 if (stores.length > 0) handleOpenCreateWithStore(stores[0]);
               }}
@@ -585,8 +600,58 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
           </div>
         </div>
 
-        {/* Filter Bar: Status & Search */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-6 pt-6 border-t border-slate-800">
+        {/* Primary View Switcher: Daftar Jadwal & Matriks vs Planner Rute Mingguan (Drag & Drop) */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-6 pt-6 border-t border-slate-800">
+          <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+            <button
+              onClick={() => setActiveMainTab('schedules_list')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeMainTab === 'schedules_list'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>Daftar & Matriks Jadwal Terdaftar</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                activeMainTab === 'schedules_list' ? 'bg-blue-800 text-blue-100' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {schedules.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveMainTab('weekly_planner')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeMainTab === 'weekly_planner'
+                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md ring-2 ring-purple-400/40'
+                  : 'text-purple-300 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Move className="w-4 h-4 text-purple-300" />
+              <span>Planner Rute Mingguan (Drag & Drop)</span>
+              <span className="bg-purple-500/20 text-purple-200 border border-purple-500/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
+                Simulasi 4 Pekan
+              </span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-400 flex items-center gap-1.5">
+            {activeMainTab === 'weekly_planner' ? (
+              <span className="text-purple-300 font-medium flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Geser kartu jadwal untuk rotasi tugas Kru atau Truk</span>
+              </span>
+            ) : (
+              <span>Pengiriman aktif dari DC Banyuwangi</span>
+            )}
+          </div>
+        </div>
+
+        {/* Filter Bar: Status & Search (Only shown in schedules_list mode) */}
+        {activeMainTab === 'schedules_list' && (
+          <>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-4 pt-4 border-t border-slate-800/80">
           <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 overflow-x-auto max-w-full">
             {['all', 'in_transit', 'scheduled', 'delivered', 'delayed'].map(st => (
               <button
@@ -750,29 +815,43 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             </span>
           </div>
         </div>
+        </>
+      )}
       </div>
 
-      {/* Panel Status Kesiapan Operasional Hari Berikutnya (Next Day Readiness) */}
-      <NextDayReadinessPanel
-        schedules={schedules}
-        crews={crews}
-        fleets={fleets}
-        onSchedulesUpdated={() => {
-          setSchedules(logisticsStore.getSchedules());
-          setCrews(logisticsStore.getCrews());
-        }}
-        onOpenSimulation={() => setIsCrewSimulationOpen(true)}
-        onSelectSchedule={(s) => setSelectedManifest(s)}
-      />
+      {/* RENDER VIEW: Weekly Route Planner (Drag & Drop) */}
+      {activeMainTab === 'weekly_planner' && (
+        <WeeklyRoutePlanner
+          crews={crews}
+          fleets={fleets}
+          stores={stores}
+        />
+      )}
 
-      {/* Panel Eksklusif Monitoring Kiriman Luar Kota & Audit Jeda 24 Jam */}
-      <OutboundGapMonitoringPanel
-        schedules={schedules}
-        crews={crews}
-        fleets={fleets}
-        onOpenSimulation={() => setIsCrewSimulationOpen(true)}
-        onSelectSchedule={(s) => setSelectedManifest(s)}
-      />
+      {/* RENDER VIEW: Schedules List & Operational Panels */}
+      {activeMainTab === 'schedules_list' && (
+        <>
+          {/* Panel Status Kesiapan Operasional Hari Berikutnya (Next Day Readiness) */}
+          <NextDayReadinessPanel
+            schedules={schedules}
+            crews={crews}
+            fleets={fleets}
+            onSchedulesUpdated={() => {
+              setSchedules(logisticsStore.getSchedules());
+              setCrews(logisticsStore.getCrews());
+            }}
+            onOpenSimulation={() => setIsCrewSimulationOpen(true)}
+            onSelectSchedule={(s) => setSelectedManifest(s)}
+          />
+
+          {/* Panel Eksklusif Monitoring Kiriman Luar Kota & Audit Jeda 24 Jam */}
+          <OutboundGapMonitoringPanel
+            schedules={schedules}
+            crews={crews}
+            fleets={fleets}
+            onOpenSimulation={() => setIsCrewSimulationOpen(true)}
+            onSelectSchedule={(s) => setSelectedManifest(s)}
+          />
 
       {/* Schedules Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm no-print">
@@ -960,6 +1039,8 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
           </table>
         </div>
       </div>
+      </>
+      )}
 
 
       {/* Create Schedule Modal */}

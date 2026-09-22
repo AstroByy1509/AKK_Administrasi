@@ -34,6 +34,18 @@ import {
 } from 'lucide-react';
 import { Crew, Fleet, RetailStore, Schedule, ShipmentStatus } from '../types';
 import { logisticsStore } from '../services/store';
+import { 
+  WEEK_SIMULATION_CONFIGS, 
+  buildWeekSchedule, 
+  validateWeekCompliance,
+  WeekSimulationConfig 
+} from '../services/simulationScheduleEngine';
+import { AreaRepetitionWarningModal } from './AreaRepetitionWarningModal';
+import { 
+  checkAreaRepetitionConflict, 
+  auditWeekAreaRotations, 
+  AreaRepetitionConflict 
+} from '../services/areaRotationValidator';
 
 interface CrewSimulationModalProps {
   isOpen: boolean;
@@ -128,6 +140,11 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
   const [activeNodeId, setActiveNodeId] = useState<string>('mon-1');
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
 
+  // States for Area Repetition Warning & Urgent Override
+  const [areaConflict, setAreaConflict] = useState<AreaRepetitionConflict | null>(null);
+  const [pendingChange, setPendingChange] = useState<{ routeId: string; field: 'driverId' | 'helperId'; value: string } | null>(null);
+  const [selectedStep3Route, setSelectedStep3Route] = useState<DailyScheduleRoute | null>(null);
+
   const daysList: DayOfWeek[] = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
   const dayIndexMap: Record<DayOfWeek, number> = {
     Senin: 0,
@@ -206,18 +223,43 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
     });
   };
 
-  // State for all 4 weeks
+  // State for all 4 weeks with week-specific requirements
   const [allWeeksData, setAllWeeksData] = useState<Record<number, DailyScheduleRoute[]>>(() => {
-    const baseWeek = buildRestGapCompliantSchedule();
+    try {
+      const saved = localStorage.getItem('akk_simulasi_weeks_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed[1] && parsed[2] && parsed[3] && parsed[4]) {
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
     return {
-      1: baseWeek,
-      2: baseWeek.map(item => ({ ...item })),
-      3: baseWeek.map(item => ({ ...item })),
-      4: baseWeek.map(item => ({ ...item }))
+      1: buildWeekSchedule(1, crews, fleets),
+      2: buildWeekSchedule(2, crews, fleets),
+      3: buildWeekSchedule(3, crews, fleets),
+      4: buildWeekSchedule(4, crews, fleets)
     };
   });
 
   const currentWeekRoutes = allWeeksData[selectedWeek] || allWeeksData[1];
+  const weekConfig = WEEK_SIMULATION_CONFIGS[selectedWeek] || WEEK_SIMULATION_CONFIGS[1];
+
+  // Live compliance check for current week and all weeks
+  const weekCompliance = useMemo(() => {
+    return validateWeekCompliance(selectedWeek, currentWeekRoutes, crews);
+  }, [selectedWeek, currentWeekRoutes, crews]);
+
+  const allWeeksCompliance = useMemo(() => {
+    return {
+      1: validateWeekCompliance(1, allWeeksData[1] || [], crews),
+      2: validateWeekCompliance(2, allWeeksData[2] || [], crews),
+      3: validateWeekCompliance(3, allWeeksData[3] || [], crews),
+      4: validateWeekCompliance(4, allWeeksData[4] || [], crews),
+    };
+  }, [allWeeksData, crews]);
 
   // Luar Kota routes only (13 routes)
   const luarKotaRoutes = useMemo(() => {
@@ -279,13 +321,18 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
     };
   }, [currentWeekRoutes]);
 
+  // AREA ROTATION AUDIT (Anti-Area-Repetition Check)
+  const areaRotationAudit = useMemo(() => {
+    return auditWeekAreaRotations(currentWeekRoutes, crews);
+  }, [currentWeekRoutes, crews]);
+
   if (!isOpen) return null;
 
   const getDriverName = (id: string) => crews.find(c => c.id === id)?.name || 'Belum Ditunjuk';
   const getHelperName = (id: string) => crews.find(c => c.id === id)?.name || 'Tanpa Helper';
   const getFleetName = (id: string) => fleets.find(f => f.id === id)?.plateNumber || 'Armada Standar';
 
-  const handleRouteChange = (routeId: string, field: 'driverId' | 'helperId' | 'truckId', value: string) => {
+  const applyRouteChange = (routeId: string, field: 'driverId' | 'helperId' | 'truckId', value: string) => {
     setAllWeeksData(prev => {
       const updatedWeek = prev[selectedWeek].map(route => {
         if (route.id === routeId) {
@@ -293,16 +340,49 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
         }
         return route;
       });
-      return { ...prev, [selectedWeek]: updatedWeek };
+      const newState = { ...prev, [selectedWeek]: updatedWeek };
+      try {
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+      } catch {
+        // ignore
+      }
+      return newState;
     });
   };
 
-  // Auto-allocate Luar Kota ensuring zero back-to-back violations
+  const handleRouteChange = (routeId: string, field: 'driverId' | 'helperId' | 'truckId', value: string) => {
+    // If updating Driver or Helper, validate if candidate crew is already assigned to this area previously
+    if (field === 'driverId' || field === 'helperId') {
+      const targetRoute = currentWeekRoutes.find(r => r.id === routeId);
+      if (targetRoute && value) {
+        const conflict = checkAreaRepetitionConflict(
+          routeId,
+          targetRoute.route,
+          targetRoute.day,
+          value,
+          field,
+          currentWeekRoutes,
+          crews,
+          selectedWeek
+        );
+
+        if (conflict) {
+          // Open warning pop up for user to choose: proceed (urgent) or replace with alternative crew
+          setPendingChange({ routeId, field, value });
+          setAreaConflict(conflict);
+          return;
+        }
+      }
+    }
+
+    applyRouteChange(routeId, field, value);
+  };
+
+  // Auto-allocate Luar Kota ensuring the week's specific rules and zero back-to-back violations
   const handleAutoAllocateLuarKota = () => {
-    const compliant = buildRestGapCompliantSchedule();
+    const compliant = buildWeekSchedule(selectedWeek, crews, fleets);
     setAllWeeksData(prev => {
-      // replace only luar kota or full schedule
-      const current = prev[selectedWeek];
+      const current = prev[selectedWeek] || [];
       const merged = current.map(item => {
         const matched = compliant.find(c => c.id === item.id);
         if (matched && matched.isLuarKota) {
@@ -310,9 +390,75 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
         }
         return item;
       });
-      return { ...prev, [selectedWeek]: merged };
+      const newState = { ...prev, [selectedWeek]: merged };
+      try {
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+      } catch {
+        // ignore
+      }
+      return newState;
     });
-    setNotificationMsg('✅ Jadwal Luar Kota & Antar-Pulau berhasil dialokasikan dengan JEDA WAKTU istirahat (Anti-Back-to-Back 100% Terpenuhi)!');
+    setNotificationMsg(`✅ Penugasan Luar Kota Minggu ${selectedWeek} (${weekConfig.theme}) berhasil diselaraskan 100%!`);
+    setTimeout(() => setNotificationMsg(null), 4000);
+  };
+
+  // Synchronize special designated crew requirements for the current week
+  const handleSyncSpecialRequirement = () => {
+    if (selectedWeek === 1) {
+      // Find Monday Denpasar 1 and sync to Wednesday
+      setAllWeeksData(prev => {
+        const weekRoutes = [...(prev[1] || [])];
+        const seninDp1 = weekRoutes.find(r => r.day === 'Senin' && r.route === 'Denpasar 1 (Bali)');
+        if (seninDp1 && seninDp1.driverId) {
+          const updated = weekRoutes.map(r => {
+            if (r.day === 'Rabu' && r.route === 'Denpasar 1 (Bali)') {
+              return { ...r, driverId: seninDp1.driverId, helperId: seninDp1.helperId, truckId: seninDp1.truckId };
+            }
+            return r;
+          });
+          const newState = { ...prev, 1: updated };
+          localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+          return newState;
+        }
+        return prev;
+      });
+      setNotificationMsg('✅ Kru Denpasar 1 (Senin & Rabu) berhasil disamakan: Driver & Helper identik!');
+    } else if (selectedWeek === 2) {
+      // Find Tuesday Singaraja and sync to Thursday Susulan Singaraja
+      setAllWeeksData(prev => {
+        const weekRoutes = [...(prev[2] || [])];
+        const tueSingaraja = weekRoutes.find(r => r.day === 'Selasa' && r.route === 'Singaraja (Bali)');
+        if (tueSingaraja && tueSingaraja.driverId) {
+          const updated = weekRoutes.map(r => {
+            if (r.day === 'Kamis' && r.route.includes('Singaraja')) {
+              return { ...r, driverId: tueSingaraja.driverId, helperId: tueSingaraja.helperId, truckId: tueSingaraja.truckId };
+            }
+            return r;
+          });
+          const newState = { ...prev, 2: updated };
+          localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+          return newState;
+        }
+        return prev;
+      });
+      setNotificationMsg('✅ Kru Singaraja (Selasa) dan Susulan Singaraja (Kamis) berhasil disamakan: Driver & Helper identik!');
+    } else if (selectedWeek === 3) {
+      const compliant = buildWeekSchedule(3, crews, fleets);
+      setAllWeeksData(prev => {
+        const newState = { ...prev, 3: compliant };
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+        return newState;
+      });
+      setNotificationMsg('✅ Klaster Jember (Selatan, Barat, Kota) berhasil dialokasikan selang 1 hari dengan jeda istirahat penuh!');
+    } else if (selectedWeek === 4) {
+      const compliant = buildWeekSchedule(4, crews, fleets);
+      setAllWeeksData(prev => {
+        const newState = { ...prev, 4: compliant };
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+        return newState;
+      });
+      setNotificationMsg('✅ Rute Tapal Kuda & Bali Barat (Situbondo/Bondowoso, Susulan, Negara) berhasil diselaraskan!');
+    }
     setTimeout(() => setNotificationMsg(null), 4000);
   };
 
@@ -329,30 +475,42 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
         }
         return item;
       });
-      return { ...prev, [selectedWeek]: updated };
+      const newState = { ...prev, [selectedWeek]: updated };
+      try {
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+      } catch {
+        // ignore
+      }
+      return newState;
     });
     setNotificationMsg('✅ Kiriman sisa lokal Banyuwangi berhasil disesuaikan dengan kru & armada yang tersedia!');
     setTimeout(() => setNotificationMsg(null), 4000);
   };
 
+  // Reset or reapply designated week template
+  const handleResetCurrentWeek = () => {
+    const fresh = buildWeekSchedule(selectedWeek, crews, fleets);
+    setAllWeeksData(prev => {
+      const newState = { ...prev, [selectedWeek]: fresh };
+      try {
+        localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(newState));
+      } catch {
+        // ignore
+      }
+      return newState;
+    });
+    setNotificationMsg(`✅ Jadwal Minggu ${selectedWeek} di-reset ke alokasi resmi sesuai persyaratan!`);
+    setTimeout(() => setNotificationMsg(null), 4000);
+  };
+
   // Save to database
   const handleSaveAndSyncToDatabase = () => {
-    const schedulesToApply = currentWeekRoutes;
-    let syncedCount = 0;
-
-    // Optional sync to logistics store if available
-    schedulesToApply.forEach((r, idx) => {
-      const existingStore = stores.find(s => s.storeName.toLowerCase().includes(r.route.toLowerCase())) || stores[0];
-      const driver = crews.find(c => c.id === r.driverId);
-      const helper = crews.find(c => c.id === r.helperId);
-      const fleet = fleets.find(f => f.id === r.truckId);
-
-      if (existingStore) {
-        syncedCount++;
-      }
-    });
-
-    setNotificationMsg(`✅ Berhasil! Simulasi jadwal mingguan (${currentWeekRoutes.length} rute) telah dikunci & disinkronkan ke manajemen operasional.`);
+    try {
+      localStorage.setItem('akk_simulasi_weeks_v2', JSON.stringify(allWeeksData));
+    } catch {
+      // ignore
+    }
+    setNotificationMsg(`✅ Berhasil! Simulasi jadwal mingguan (${currentWeekRoutes.length} rute untuk ${weekConfig.title}) telah dikunci & disinkronkan ke sistem.`);
     setTimeout(() => setNotificationMsg(null), 4000);
   };
 
@@ -400,6 +558,47 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* SIKLUS SIMULASI 4 PEKAN (URUTAN JADWAL LUAR KOTA) */}
+        <div className="bg-slate-900/95 px-6 py-2.5 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Siklus 4 Pekan:</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1 max-w-4xl">
+            {[1, 2, 3, 4].map(wNum => {
+              const cfg = WEEK_SIMULATION_CONFIGS[wNum];
+              const comp = allWeeksCompliance[wNum as 1 | 2 | 3 | 4];
+              const isSelected = selectedWeek === wNum;
+              return (
+                <button
+                  key={wNum}
+                  onClick={() => setSelectedWeek(wNum)}
+                  className={`p-2 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/50'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-slate-900/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-black text-xs">Pekan {wNum}</span>
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                      comp?.isCompliant ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                    }`}>
+                      {comp?.isCompliant ? '✅ Sesuai' : '⚠️ Cek'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate mt-0.5" title={cfg.theme}>
+                    {cfg.theme}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* 3-STEP WORKFLOW TAB SWITCHER */}
@@ -564,6 +763,77 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                 </div>
               </div>
 
+              {/* Persyaratan Khusus Rotasi Luar Kota Pekan Ini */}
+              <div className={`p-4 rounded-2xl border transition shadow-sm ${
+                weekCompliance.isCompliant
+                  ? 'bg-gradient-to-r from-emerald-950/40 via-slate-950 to-indigo-950/30 border-emerald-500/40'
+                  : 'bg-gradient-to-r from-amber-950/40 via-slate-950 to-purple-950/30 border-amber-500/40'
+              }`}>
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-1 rounded-lg font-black text-xs border flex items-center gap-1.5 ${
+                        weekCompliance.isCompliant 
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      }`}>
+                        <Shield className="w-3.5 h-3.5" />
+                        <span>PERSYARATAN PEKAN {selectedWeek}: {weekConfig.theme}</span>
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        weekCompliance.isCompliant ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {weekCompliance.statusText}
+                      </span>
+                    </div>
+                    <h5 className="font-bold text-white text-sm mt-1.5 flex items-center gap-2">
+                      <span>"{weekConfig.requirement}"</span>
+                    </h5>
+                    <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+                      {weekCompliance.summaryText}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap shrink-0">
+                    <button
+                      onClick={handleSyncSpecialRequirement}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+                      <span>{weekCompliance.fixButtonLabel || 'Selaraskan Kru Khusus'}</span>
+                    </button>
+
+                    <button
+                      onClick={handleResetCurrentWeek}
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+                      title="Reset kembali ke alokasi resmi"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reset Pekan {selectedWeek}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Checklist criteria */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-800/80 text-[11px]">
+                  {weekCompliance.checklist.map(chk => (
+                    <div key={chk.id} className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800/80 flex items-start gap-2">
+                      {chk.passed ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      )}
+                      <div>
+                        <div className={`font-bold ${chk.passed ? 'text-emerald-300' : 'text-amber-300'}`}>
+                          {chk.label}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{chk.detail}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Day filter tabs for Luar Kota */}
               <div className="flex items-center justify-between bg-slate-950 p-2 rounded-xl border border-slate-800 flex-wrap gap-2">
                 <div className="flex items-center gap-1 flex-wrap">
@@ -616,6 +886,27 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                           : 'bg-slate-950 border-slate-800 hover:border-slate-700'
                       }`}
                     >
+                      {/* Special Week Requirement Tag */}
+                      {(() => {
+                        let reqBadge: { title: string; color: string } | null = null;
+                        if (selectedWeek === 1 && item.route === 'Denpasar 1 (Bali)') {
+                          reqBadge = { title: '⭐ Syarat Minggu 1: Driver & Helper Denpasar 1 Sama (Senin & Rabu)', color: 'bg-purple-500/20 text-purple-300 border-purple-500/40' };
+                        } else if (selectedWeek === 2 && item.route.includes('Singaraja')) {
+                          reqBadge = { title: '⭐ Syarat Minggu 2: Driver & Helper Singaraja & Susulan Sama', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' };
+                        } else if (selectedWeek === 3 && (item.route === 'Jember Selatan' || item.route === 'Jember Barat' || item.route === 'Jember Kota')) {
+                          reqBadge = { title: `⭐ Syarat Minggu 3: Klaster Jember (${item.route})`, color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+                        } else if (selectedWeek === 4 && (item.route === 'Situbondo' || item.route === 'Bondowoso' || item.route.includes('Situbondo') || item.route.includes('Negara'))) {
+                          reqBadge = { title: `⭐ Syarat Minggu 4: ${item.route}`, color: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+                        }
+                        if (!reqBadge) return null;
+                        return (
+                          <div className={`p-2 rounded-xl border text-[11px] font-bold mb-3 flex items-center justify-between ${reqBadge.color}`}>
+                            <span>{reqBadge.title}</span>
+                            <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 bg-slate-900/60 rounded">Prioritas</span>
+                          </div>
+                        );
+                      })()}
+
                       {/* Top Bar */}
                       <div className="flex items-start justify-between gap-2 mb-3">
                         <div>
@@ -917,8 +1208,47 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
           {activeStepTab === 'matriks_terpadu' && (
             <div className="space-y-6">
               
+              {/* Pekan Status Banner in Step 3 */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-sm shrink-0">
+                    W{selectedWeek}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-sm">Audit Matriks Pekan {selectedWeek}: {weekConfig.theme}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        weekCompliance.isCompliant ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      }`}>
+                        {weekCompliance.statusText}
+                      </span>
+                    </div>
+                    <div className="text-slate-400 text-xs mt-0.5">
+                      Persyaratan: <em>"{weekConfig.requirement}"</em> • {weekCompliance.summaryText}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    onClick={handleSyncSpecialRequirement}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{weekCompliance.fixButtonLabel}</span>
+                  </button>
+                  <button
+                    onClick={handleResetCurrentWeek}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reset Pekan {selectedWeek}</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Summary Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs">
                 <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
                   <div className="text-slate-400 text-[10px]">Total Rute Terstruktur</div>
                   <div className="text-lg font-black text-white mt-0.5">36 Rute</div>
@@ -931,6 +1261,18 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                     {restGapAnalysis.isFullyCompliant ? '100% Sempurna' : `${restGapAnalysis.violations.length} Konflik`}
                   </div>
                   <div className="text-[10px] text-emerald-300 mt-1">Anti-Kelelahan Terverifikasi</div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-slate-400 text-[10px]">Rotasi Variasi Area Kru</div>
+                  <div className={`text-lg font-black mt-0.5 ${
+                    areaRotationAudit.isFullyVaried ? 'text-emerald-400' : 'text-amber-400'
+                  }`}>
+                    {areaRotationAudit.isFullyVaried ? '100% Beragam' : `${areaRotationAudit.repeatedAssignmentsCount} Berulang`}
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    {areaRotationAudit.isFullyVaried ? 'Bebas Pengulangan Area' : 'Override Mendesak Terpantau'}
+                  </div>
                 </div>
 
                 <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
@@ -975,19 +1317,22 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                       <div className="space-y-2 flex-1">
                         {dayRoutes.map((r, idx) => {
                           const driver = crews.find(c => c.id === r.driverId);
+                          const helper = crews.find(c => c.id === r.helperId);
                           const fleet = fleets.find(f => f.id === r.truckId);
 
                           return (
                             <div 
                               key={r.id}
-                              className={`p-2 rounded-xl border text-left text-[10px] ${
+                              onClick={() => setSelectedStep3Route(r)}
+                              title="Klik untuk melihat detail & rotasi penugasan kru"
+                              className={`p-2 rounded-xl border text-left text-[10px] cursor-pointer transition hover:scale-[1.02] hover:shadow-lg ${
                                 r.isLuarKota 
-                                  ? 'bg-purple-950/40 border-purple-800/60 ring-1 ring-purple-500/20' 
-                                  : 'bg-slate-900/70 border-slate-800'
+                                  ? 'bg-purple-950/40 border-purple-800/60 ring-1 ring-purple-500/20 hover:border-purple-400' 
+                                  : 'bg-slate-900/70 border-slate-800 hover:border-slate-600'
                               }`}
                             >
                               <div className="flex items-center justify-between gap-1 mb-1">
-                                <span className="font-bold text-white truncate max-w-[110px]" title={r.route}>
+                                <span className="font-bold text-white truncate max-w-[100px]" title={r.route}>
                                   {r.route}
                                 </span>
                                 <span className={`px-1 py-0.2 rounded text-[8px] font-bold ${
@@ -998,13 +1343,19 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                               </div>
 
                               <div className="text-slate-400 flex items-center justify-between">
-                                <span className="text-slate-300 font-semibold truncate max-w-[75px]">
+                                <span className="text-slate-300 font-semibold truncate max-w-[70px]">
                                   👨‍✈️ {driver ? driver.name.split(' ')[0] : '-'}
                                 </span>
                                 <span className="font-mono text-slate-400 text-[9px]">
                                   🚛 {fleet ? fleet.plateNumber : '-'}
                                 </span>
                               </div>
+
+                              {helper && (
+                                <div className="text-[8px] text-slate-500 truncate mt-0.5">
+                                  Helper: {helper.name.split(' ')[0]}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -1023,7 +1374,7 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
         <div className="bg-slate-950 px-6 py-4 border-t border-slate-800 flex items-center justify-between shrink-0 text-xs">
           <div className="text-slate-400 flex items-center gap-2">
             <Shield className="w-4 h-4 text-emerald-400" />
-            <span>Siklus Penugasan Area Terstruktur • Validasi Jeda Istirahat Aktif</span>
+            <span>Siklus Penugasan Area Terstruktur • Validasi Jeda Istirahat & Rotasi Area Aktif</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1044,6 +1395,140 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
         </div>
 
       </div>
+
+      {/* Pop-up Peringatan Rotasi Area (Area Berulang / Keadaan Mendesak) */}
+      <AreaRepetitionWarningModal
+        isOpen={Boolean(areaConflict)}
+        conflict={areaConflict}
+        onProceedUrgent={() => {
+          if (pendingChange) {
+            applyRouteChange(pendingChange.routeId, pendingChange.field, pendingChange.value);
+            setNotificationMsg(`⚠️ Penugasan Area Berulang Diterapkan (Keadaan Mendesak): ${areaConflict?.crewName} ke area ${areaConflict?.areaName}`);
+            setTimeout(() => setNotificationMsg(null), 5000);
+          }
+          setAreaConflict(null);
+          setPendingChange(null);
+        }}
+        onSelectAlternative={(newCrewId) => {
+          if (pendingChange) {
+            applyRouteChange(pendingChange.routeId, pendingChange.field, newCrewId);
+            const altCrew = crews.find(c => c.id === newCrewId);
+            setNotificationMsg(`✅ Berhasil Mengganti Kru: Ditugaskan ke ${altCrew ? altCrew.name : 'Kru Baru'}`);
+            setTimeout(() => setNotificationMsg(null), 5000);
+          }
+          setAreaConflict(null);
+          setPendingChange(null);
+        }}
+        onCancel={() => {
+          setAreaConflict(null);
+          setPendingChange(null);
+        }}
+      />
+
+      {/* Quick Route Reassign Modal for Step 3 Matriks */}
+      {selectedStep3Route && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fade-in">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                  Rotasi & Penugasan Kru ({selectedStep3Route.day})
+                </span>
+                <h4 className="text-base font-bold text-white mt-0.5">{selectedStep3Route.route}</h4>
+              </div>
+              <button
+                onClick={() => setSelectedStep3Route(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Route Stats */}
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <div className="text-slate-500 text-[10px]">Tipe</div>
+                <div className="font-bold text-slate-200 mt-0.5">{selectedStep3Route.isLuarKota ? 'Luar Kota' : 'Lokal'}</div>
+              </div>
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <div className="text-slate-500 text-[10px]">Jarak</div>
+                <div className="font-bold text-slate-200 mt-0.5">{selectedStep3Route.distanceKm} KM</div>
+              </div>
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <div className="text-slate-500 text-[10px]">Estimasi</div>
+                <div className="font-bold text-slate-200 mt-0.5">{selectedStep3Route.estimatedHours} Jam</div>
+              </div>
+            </div>
+
+            {/* Driver Select */}
+            <div className="space-y-1.5 text-xs">
+              <label className="text-slate-300 font-semibold flex items-center justify-between">
+                <span>Driver Utama:</span>
+                <span className="text-[10px] text-slate-400 font-normal">Cek Rotasi Area Aktif</span>
+              </label>
+              <select
+                value={currentWeekRoutes.find(r => r.id === selectedStep3Route.id)?.driverId || ''}
+                onChange={(e) => handleRouteChange(selectedStep3Route.id, 'driverId', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="">-- Pilih Driver Utama --</option>
+                {driversList.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.licenseType})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Helper Select */}
+            <div className="space-y-1.5 text-xs">
+              <label className="text-slate-300 font-semibold flex items-center justify-between">
+                <span>Helper / Kernet:</span>
+                <span className="text-[10px] text-slate-400 font-normal">Cek Rotasi Area Aktif</span>
+              </label>
+              <select
+                value={currentWeekRoutes.find(r => r.id === selectedStep3Route.id)?.helperId || ''}
+                onChange={(e) => handleRouteChange(selectedStep3Route.id, 'helperId', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="">-- Tanpa Helper / Pilih --</option>
+                {helpersList.map(h => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Fleet Select */}
+            <div className="space-y-1.5 text-xs">
+              <label className="text-slate-300 font-semibold">Armada Truk:</label>
+              <select
+                value={currentWeekRoutes.find(r => r.id === selectedStep3Route.id)?.truckId || ''}
+                onChange={(e) => handleRouteChange(selectedStep3Route.id, 'truckId', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="">-- Pilih Truk --</option>
+                {fleets.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.plateNumber} ({f.vehicleType} - {f.tonnageCapacity || 2} Ton)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setSelectedStep3Route(null)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs transition cursor-pointer"
+              >
+                Selesai & Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
