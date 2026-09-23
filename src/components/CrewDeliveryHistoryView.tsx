@@ -11,9 +11,11 @@ export const CrewDeliveryHistoryView: React.FC = () => {
   const [threshold, setThreshold] = useState<number>(logisticsStore.getAreaDeliveryThreshold());
 
   const [selectedCrewId, setSelectedCrewId] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedAreaFilter, setSelectedAreaFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'approvals' | 'area_stats'>('history');
+  const [activeSubTab, setActiveSubTab] = useState<'history' | 'approvals' | 'area_stats' | 'fleet_stats'>('history');
 
   // Interactive Approval Modal State
   const [modalData, setModalData] = useState<{
@@ -101,15 +103,17 @@ export const CrewDeliveryHistoryView: React.FC = () => {
   };
 
   const filteredHistory = history.filter(item => {
+    const itemDate = new Date(item.completionDate);
     const matchesCrew = selectedCrewId === 'all' || item.crewId === selectedCrewId;
     const matchesArea = selectedAreaFilter === 'all' || item.island === selectedAreaFilter || item.area.includes(selectedAreaFilter);
+    const matchesDate = itemDate.getMonth() === selectedMonth && itemDate.getFullYear() === selectedYear;
     const matchesSearch =
       item.crewName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.trackingNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.vehiclePlate.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCrew && matchesArea && matchesSearch;
+    return matchesCrew && matchesArea && matchesSearch && matchesDate;
   });
 
   return (
@@ -186,9 +190,37 @@ export const CrewDeliveryHistoryView: React.FC = () => {
               <MapPin className="w-3.5 h-3.5" />
               <span>Frekuensi Kru per Area</span>
             </button>
+
+            <button
+              onClick={() => setActiveSubTab('fleet_stats')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                activeSubTab === 'fleet_stats' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Truck className="w-3.5 h-3.5" />
+              <span>Frekuensi Armada per Area</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200"
+            >
+              {Array.from({ length: 12 }).map((_, i) => (
+                <option key={i} value={i}>{new Date(0, i).toLocaleString('id-ID', { month: 'long' })}</option>
+              ))}
+            </select>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200"
+            >
+              {Array.from({ length: 5 }).map((_, i) => (
+                <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>
+              ))}
+            </select>
             <div className="relative flex-1 sm:w-60">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
               <input
@@ -461,6 +493,49 @@ export const CrewDeliveryHistoryView: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Tab 4: Frekuensi Armada per Area */}
+      {activeSubTab === 'fleet_stats' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm p-5">
+          <h3 className="text-sm font-bold text-white mb-4">Frekuensi Armada per Area ({new Date(selectedYear, selectedMonth).toLocaleString('id-ID', { month: 'long', year: 'numeric' })})</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th className="p-3">Armada (Plat)</th>
+                  <th className="p-3">Area</th>
+                  <th className="p-3">Jumlah Trip</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {(() => {
+                  const stats: { plate: string; area: string; count: number }[] = [];
+                  const map = new Map<string, Map<string, number>>();
+                  filteredHistory.forEach(h => {
+                    if (!map.has(h.vehiclePlate)) map.set(h.vehiclePlate, new Map());
+                    const areaMap = map.get(h.vehiclePlate)!;
+                    areaMap.set(h.area, (areaMap.get(h.area) || 0) + 1);
+                  });
+                  map.forEach((areas, plate) => {
+                    areas.forEach((count, area) => {
+                      stats.push({ plate, area, count });
+                    });
+                  });
+                  return stats.length > 0 ? stats.map((st, i) => (
+                    <tr key={i} className="hover:bg-slate-800/40">
+                      <td className="p-3 font-mono">{st.plate}</td>
+                      <td className="p-3">{st.area}</td>
+                      <td className="p-3 font-bold text-white">{st.count}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={3} className="p-4 text-center italic text-slate-500">Tidak ada data untuk periode ini.</td></tr>
+                  );
+                })()}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

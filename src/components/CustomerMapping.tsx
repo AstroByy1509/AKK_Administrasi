@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2 } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
@@ -10,11 +10,48 @@ interface CustomerMappingProps {
 
 export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForStore }) => {
   const [stores, setStores] = useState<RetailStore[]>(logisticsStore.getStores());
+  // State to hold selected week for route visualization
+  const [selectedWeek, setSelectedWeek] = useState<number>(1);
+  const [showRoutes, setShowRoutes] = useState<boolean>(true);
   const [selectedIsland, setSelectedIsland] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState<RetailStore | null>(null);
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+
+  // Helper to fetch routes for the selected week
+  const routesForWeek = useMemo(() => {
+    // This replicates the logic in WeeklyRoutePlanner to get routes for a week
+    // Simplified for now based on available data in the simulation context
+    try {
+      const saved = localStorage.getItem('akk_simulasi_weeks_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed[selectedWeek] || [];
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }, [selectedWeek]);
+
+  // Transform routes into polylines for the map
+  const routePolylines = useMemo(() => {
+    if (!showRoutes) return [];
+    
+    // Group routes by day to draw separate lines or all at once?
+    // Let's draw all routes for the week, maybe color coded by day.
+    return routesForWeek.map(route => {
+      const store = stores.find(s => s.storeName === route.route) || stores.find(s => route.route.includes(s.storeName));
+      if (store) {
+        return {
+          coords: [[-8.2333, 114.3667], [store.latitude, store.longitude]] as [number, number][],
+          color: route.day === 'Senin' ? '#ef4444' : route.day === 'Selasa' ? '#f59e0b' : route.day === 'Rabu' ? '#10b981' : route.day === 'Kamis' ? '#3b82f6' : route.day === 'Jumat' ? '#8b5cf6' : '#ec4899'
+        };
+      }
+      return null;
+    }).filter(p => p !== null);
+  }, [routesForWeek, stores, showRoutes]);
 
   // Form State for new store
   const [newStore, setNewStore] = useState({
@@ -149,6 +186,19 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
 
             <div className="flex items-center gap-2">
               <select
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+              >
+                {[1, 2, 3, 4].map(w => <option key={w} value={w}>Pekan {w}</option>)}
+              </select>
+              <button 
+                onClick={() => setShowRoutes(!showRoutes)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${showRoutes ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400'} border border-slate-800`}
+              >
+                {showRoutes ? 'Sembunyikan Rute' : 'Tampilkan Rute'}
+              </button>
+              <select
                 value={selectedIsland}
                 onChange={(e) => setSelectedIsland(e.target.value)}
                 className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
@@ -205,6 +255,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 highlightIsland={selectedIsland}
                 heightClass="h-[520px]"
                 showWarehouse={true}
+                plannedPolyline={routePolylines.map(p => p.coords[1])}
               />
             </div>
           </div>
