@@ -1,4 +1,4 @@
-import { Crew } from '../types';
+import { Crew, Schedule } from '../types';
 import { DailyScheduleRoute } from '../components/CrewSimulationModal';
 
 export interface RouteAreaInfo {
@@ -108,6 +108,68 @@ export interface AreaRepetitionConflict {
   isCrossWeek?: boolean;
   eligibleAlternatives: Crew[];
   isWeekMandatedRule?: boolean;
+}
+
+/**
+ * Checks for consecutive week conflicts for a crew in the same area.
+ */
+export function checkConsecutiveWeekConflict(
+  targetDate: string,
+  targetAreaName: string,
+  candidateCrewId: string,
+  field: 'driverId' | 'helperId',
+  allSchedules: Schedule[],
+  allCrews: Crew[]
+): AreaRepetitionConflict | null {
+  const targetDateObj = new Date(targetDate);
+  const targetAreaInfo = extractRouteArea(targetAreaName);
+  
+  // Helper to get week number
+  const getWeekNumber = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    return Math.ceil((((d.getTime() - new Date(d.getFullYear(), 0, 1).getTime()) / 8.64e7) + 1) / 7);
+  };
+  
+  const targetWeek = getWeekNumber(targetDateObj);
+  
+  // Check previous week
+  const conflictSchedule = allSchedules.find(s => {
+    const sDate = new Date(s.departureDate);
+    const sWeek = getWeekNumber(sDate);
+    if (sWeek !== targetWeek - 1) return false;
+    
+    const assignedId = field === 'driverId' ? s.crewId : s.crewHelperId;
+    if (assignedId !== candidateCrewId) return false;
+    
+    const sArea = extractRouteArea(s.store?.storeName || ''); // Need area from store
+    return sArea.areaKey === targetAreaInfo.areaKey;
+  });
+  
+  if (conflictSchedule) {
+      const candidateCrew = allCrews.find(c => c.id === candidateCrewId);
+      if (!candidateCrew) return null;
+
+      return {
+          crewId: candidateCrewId,
+          crewName: candidateCrew.name,
+          roleType: field === 'driverId' ? 'Driver Utama' : 'Helper / Kernet',
+          field: field,
+          targetRouteId: 'new-id',
+          targetRouteName: targetAreaName,
+          targetDay: targetDateObj.toDateString(),
+          areaName: targetAreaInfo.displayName,
+          previousRouteName: conflictSchedule.store?.storeName || 'Unknown',
+          previousDay: new Date(conflictSchedule.departureDate).toDateString(),
+          previousPeriodLabel: `Pekan ${getWeekNumber(new Date(conflictSchedule.departureDate))}`,
+          isCrossWeek: true,
+          eligibleAlternatives: [], // Simplified for now
+          isWeekMandatedRule: false
+      };
+  }
+  
+  return null;
 }
 
 /**

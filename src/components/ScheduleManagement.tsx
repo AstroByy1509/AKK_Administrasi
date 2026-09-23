@@ -14,6 +14,8 @@ import { NextDayReadinessPanel } from './NextDayReadinessPanel';
 import { SmartFillModal } from './SmartFillModal';
 import { SmartFillResult } from '../services/scheduleInitializer';
 import { WeeklyRoutePlanner } from './WeeklyRoutePlanner';
+import { AreaRepetitionWarningModal } from './AreaRepetitionWarningModal';
+import { checkConsecutiveWeekConflict, AreaRepetitionConflict } from '../services/areaRotationValidator';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
@@ -69,6 +71,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [isSmartFillOpen, setIsSmartFillOpen] = useState(false);
   const [autoInitMessage, setAutoInitMessage] = useState<string | null>(null);
   const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner'>('schedules_list');
+  const [consecutiveConflict, setConsecutiveConflict] = useState<AreaRepetitionConflict | null>(null);
 
   // Helper to extract day of week from schedule
   const getScheduleDayName = (sch: Schedule): string => {
@@ -330,6 +333,21 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
     if (!newSchedule.storeId || !newSchedule.fleetId || !newSchedule.crewId) {
       alert('Harap pilih Toko Tujuan, Armada Truk, dan Kru Supir.');
       return;
+    }
+
+    // New validation check
+    const conflict = checkConsecutiveWeekConflict(
+        newSchedule.departureDate,
+        selectedStoreObj?.storeName || '',
+        newSchedule.crewId,
+        'driverId',
+        schedules,
+        crews
+    );
+    
+    if (conflict) {
+        setConsecutiveConflict(conflict);
+        return;
     }
 
     // Intercept with area threshold approval if required and not yet approved
@@ -1388,6 +1406,20 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
         recentTrips={areaApprovalModalData.recentTrips}
         onApprove={handleApproveAreaAndSaveSchedule}
         onRejectAndPickOtherDriver={handleRejectAndPickOtherDriver}
+      />
+
+      <AreaRepetitionWarningModal
+        isOpen={!!consecutiveConflict}
+        conflict={consecutiveConflict}
+        onProceedUrgent={() => {
+             setConsecutiveConflict(null);
+             // Call logic to save schedule directly
+        }}
+        onSelectAlternative={(crewId) => {
+             setNewSchedule(prev => ({ ...prev, crewId }));
+             setConsecutiveConflict(null);
+        }}
+        onCancel={() => setConsecutiveConflict(null)}
       />
 
       {/* Crew & Driver Simulation Modal */}
