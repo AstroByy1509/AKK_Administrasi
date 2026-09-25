@@ -11,6 +11,18 @@ async function startServer() {
 
   app.use(express.json());
 
+  // API route for Chat
+  app.post("/api/chat", async (req, res) => {
+    const { message } = req.body;
+    try {
+      // In a real scenario, integrate with Gemini Interactions API here
+      // For now, returning a mock response
+      res.json({ reply: `Terima kasih atas pertanyaannya: "${message}". Asisten sedang diproses.` });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get response" });
+    }
+  });
+
   // API route for WhatsApp notification
   app.post("/api/notify-whatsapp", async (req, res) => {
     const { phoneNumber, message } = req.body;

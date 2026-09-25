@@ -620,6 +620,32 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           </div>
         </div>
 
+        {/* Operational Efficiency Section */}
+        <div className="mt-6 pt-6 border-t border-slate-800/80">
+          <h3 className="text-sm font-bold text-white mb-4">Analisa Efisiensi Operasional</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {fleets.map(f => {
+              const logs = logisticsStore.getFuelLogs().filter(l => l.fleetId === f.id);
+              const totalCost = logs.reduce((acc, l) => acc + l.totalCost, 0);
+              const totalDist = logs.reduce((acc, l) => acc + l.distanceKm, 0);
+              const costPerKm = totalDist > 0 ? (totalCost / totalDist).toFixed(2) : '0.00';
+              
+              return (
+                <div key={f.id} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
+                  <div>
+                    <div className="text-white font-bold">{f.plateNumber}</div>
+                    <div className="text-xs text-slate-400">{f.vehicleType}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-emerald-400">Rp {costPerKm} / KM</div>
+                    <div className="text-[10px] text-slate-500">Biaya Operasional</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Filter Summary Tags */}
         <div className="mt-3.5 pt-3 border-t border-slate-800/60 flex flex-wrap items-center gap-2 text-[11px]">
           <span className="text-slate-400 font-medium">Filter Aktif:</span>

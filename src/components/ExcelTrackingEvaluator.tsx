@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Upload, FileSpreadsheet, Download, AlertTriangle, CheckCircle2, Clock, Gauge, Compass, MapPin, RefreshCw, Layers } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
-import { TrackingPoint, RouteStop, TrackingEvaluation } from '../types';
+import { DeliveryHeatmap } from './DeliveryHeatmap';
+import { INITIAL_STORES } from '../data/mockData';
+import { TrackingPoint, RouteStop, TrackingEvaluation, RetailStore } from '../types';
 import { SAMPLE_ROUTE_POINTS, CENTRAL_WAREHOUSE } from '../data/mockData';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from 'recharts';
 
@@ -19,10 +21,26 @@ function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
+// Find closest retail store
+function findClosestStore(lat: number, lon: number, stores: RetailStore[]): RetailStore | null {
+  let minDistance = 5; // 5km radius tolerance
+  let closest: RetailStore | null = null;
+  
+  for (const store of stores) {
+    const dist = calculateDistanceKm(lat, lon, store.latitude, store.longitude);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closest = store;
+    }
+  }
+  return closest;
+}
+
 export const ExcelTrackingEvaluator: React.FC = () => {
   const [evaluation, setEvaluation] = useState<TrackingEvaluation | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState<'map' | 'chart' | 'table'>('map');
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Process array of raw tracking points into logistics metrics
@@ -60,8 +78,9 @@ export const ExcelTrackingEvaluator: React.FC = () => {
       const pt = points[i];
       if (pt.speed <= 2 || pt.engineStatus === 'IDLE' || pt.engineStatus === 'STOP') {
         const isPort = pt.latitude < -5.85 && pt.latitude > -6.05;
+        const matchedStore = findClosestStore(pt.latitude, pt.longitude, INITIAL_STORES);
         const isRestArea = pt.locationName?.toLowerCase().includes('rest') || pt.speed === 0;
-        const duration = isPort ? 65 : 35; // realistic idle estimation
+        const duration = isPort ? 65 : (matchedStore ? 45 : 35); // realistic idle estimation
 
         idleMinutesTotal += duration;
         stops.push({
@@ -71,8 +90,8 @@ export const ExcelTrackingEvaluator: React.FC = () => {
           durationMinutes: duration,
           latitude: pt.latitude,
           longitude: pt.longitude,
-          locationName: pt.locationName || `Titik Koordinat [${pt.latitude.toFixed(4)}, ${pt.longitude.toFixed(4)}]`,
-          reason: isPort ? 'Port Transit / Ferry Queue' : 'Driver Rest / Meals'
+          locationName: matchedStore ? `${matchedStore.storeName} (${matchedStore.city})` : (pt.locationName || `Titik Koordinat [${pt.latitude.toFixed(4)}, ${pt.longitude.toFixed(4)}]`),
+          reason: matchedStore ? 'Retail Unloading' : (isPort ? 'Port Transit / Ferry Queue' : 'Driver Rest / Meals')
         });
       }
     }
@@ -408,16 +427,36 @@ export const ExcelTrackingEvaluator: React.FC = () => {
                         <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
                         Titik Awal (Gudang Banyuwangi)
                       </span>
+                      <button
+                        onClick={() => setShowHeatmap(!showHeatmap)}
+                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded border transition ${
+                          showHeatmap 
+                            ? 'bg-rose-500/10 border-rose-500/50 text-rose-400' 
+                            : 'bg-slate-800 border-slate-700 text-slate-400'
+                        }`}
+                      >
+                        <Layers className="w-3 h-3" />
+                        {showHeatmap ? 'Sembunyikan Heatmap' : 'Aktifkan Heatmap'}
+                      </button>
                     </div>
                     <span className="text-[11px] font-mono text-slate-500">Klik marker untuk melihat detail telemetri</span>
                   </div>
 
-                  <LeafletMap
-                    trackingPoints={evaluation.points}
-                    stops={evaluation.stops}
-                    heightClass="h-[480px]"
-                    showWarehouse={true}
-                  />
+                  <div className="relative">
+                    <div className={showHeatmap ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}>
+                      <LeafletMap
+                        trackingPoints={evaluation.points}
+                        stops={evaluation.stops}
+                        heightClass="h-[480px]"
+                        showWarehouse={true}
+                      />
+                    </div>
+                    {showHeatmap && (
+                      <div className="h-[480px]">
+                        <DeliveryHeatmap />
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

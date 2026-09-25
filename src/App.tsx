@@ -16,6 +16,7 @@ import { SupabaseSqlArchitecture } from './components/SupabaseSqlArchitecture';
 import { SalesAdminHub, SalesAdminSubTab } from './components/sales/SalesAdminHub';
 import { SalesKpi } from './components/sales/SalesKpi';
 import { PurchasingStockAnalysis } from './components/purchasing/PurchasingStockAnalysis';
+import { HelpDeskChat } from './components/HelpDeskChat';
 import { AuthModal } from './components/AuthModal';
 import { ThemeSwitcher } from './components/ThemeSwitcher';
 import { SystemActivityLog } from './components/SystemActivityLog';
@@ -396,6 +397,7 @@ export default function App() {
         onClose={() => setIsAuthOpen(false)}
         defaultTab={authDefaultTab}
       />
+      <HelpDeskChat />
     </div>
   );
 }

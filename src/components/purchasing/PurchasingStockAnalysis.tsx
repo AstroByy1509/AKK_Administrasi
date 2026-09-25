@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { Database, TrendingUp, AlertTriangle, Package, CheckCircle2, Download, Trash2, Filter } from 'lucide-react';
+import { Database, TrendingUp, AlertTriangle, Package, CheckCircle2, Download, Trash2, Filter, ClipboardList, Map as MapIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { DeliveryHeatmap } from '../DeliveryHeatmap';
 
 const MOCK_STOCK_DATA = [
-  { id: 1, item: 'Karton Box A1', stock: 500, reorderPoint: 200, status: 'Aman', category: 'Packaging' },
-  { id: 2, item: 'Karton Box B2', stock: 150, reorderPoint: 200, status: 'Kritis', category: 'Packaging' },
-  { id: 3, item: 'Lakban Coklat', stock: 300, reorderPoint: 500, status: 'Pesan Ulang', category: 'Bahan Tambahan' },
+  { id: 1, item: 'Karton Box A1', stock: 500, physicalStock: 495, reorderPoint: 200, dailyUsage: 50, status: 'Aman', category: 'Packaging' },
+  { id: 2, item: 'Karton Box B2', stock: 150, physicalStock: 150, reorderPoint: 200, dailyUsage: 80, status: 'Kritis', category: 'Packaging' },
+  { id: 3, item: 'Lakban Coklat', stock: 300, physicalStock: 280, reorderPoint: 500, dailyUsage: 20, status: 'Pesan Ulang', category: 'Bahan Tambahan' },
 ];
 
 // Generate 30 days of mock trend data
@@ -26,6 +27,22 @@ export const PurchasingStockAnalysis: React.FC<{ tab: 'overview' | 'forecast' }>
       ? MOCK_STOCK_DATA 
       : MOCK_STOCK_DATA.filter(i => i.category === categoryFilter);
   }, [categoryFilter]);
+  
+  const getDaysRemaining = (stock: number, usage: number) => Math.floor(stock / usage);
+  const isHighVelocity = (usage: number) => usage > 50;
+
+  const criticalItems = useMemo(() => {
+    return MOCK_STOCK_DATA.filter(item => 
+      item.stock < item.reorderPoint && isHighVelocity(item.dailyUsage)
+    );
+  }, []);
+  
+  const discrepancyReport = useMemo(() => {
+    return MOCK_STOCK_DATA.map(item => ({
+      ...item,
+      discrepancy: item.physicalStock - item.stock
+    })).filter(item => item.discrepancy !== 0);
+  }, []);
 
   const exportToExcel = () => {
     const worksheet = XLSX.utils.json_to_sheet(filteredData);
@@ -71,8 +88,51 @@ export const PurchasingStockAnalysis: React.FC<{ tab: 'overview' | 'forecast' }>
         </div>
       )}
 
+      {criticalItems.length > 0 && (
+        <div className="bg-rose-900/10 border border-rose-800 p-4 rounded-xl">
+          <div className="flex items-center gap-2 mb-2 text-rose-400 font-bold">
+            <AlertTriangle className="w-5 h-5" />
+            <span>Alert Stok Kritis (Produk Laju Tinggi)</span>
+          </div>
+          <p className="text-sm text-rose-300">
+            Segera lakukan pemesanan untuk item berikut agar tidak terjadi kekosongan stok: 
+            {criticalItems.map(item => item.item).join(', ')}
+          </p>
+        </div>
+      )}
+      
       {tab === 'overview' && (
         <div className="space-y-6">
+          {/* Discrepancy Report */}
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
+            <div className="flex items-center gap-3 mb-4 text-white font-bold">
+              <ClipboardList className="w-5 h-5 text-indigo-400" />
+              <h3>Laporan Selisih Stok (Mingguan)</h3>
+            </div>
+            {discrepancyReport.length > 0 ? (
+              <div className="space-y-2">
+                {discrepancyReport.map(item => (
+                  <div key={item.id} className="flex justify-between items-center bg-slate-800 p-3 rounded-lg text-sm">
+                    <span className="font-bold text-white">{item.item}</span>
+                    <span className={`font-bold ${item.discrepancy > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {item.discrepancy > 0 ? '+' : ''}{item.discrepancy}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Tidak ada selisih stok ditemukan.</p>
+            )}
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
+            <div className="flex items-center gap-3 mb-4 text-white font-bold">
+              <MapIcon className="w-5 h-5 text-indigo-400" />
+              <h3>Heatmap Kepadatan Pengiriman</h3>
+            </div>
+            <DeliveryHeatmap />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
               <div className="flex items-center gap-3 mb-2">
@@ -127,17 +187,24 @@ export const PurchasingStockAnalysis: React.FC<{ tab: 'overview' | 'forecast' }>
               </div>
             </div>
             <div className="space-y-2">
-              {filteredData.map(item => (
-                <div key={item.id} className="flex justify-between items-center bg-slate-800 p-4 rounded-lg text-sm">
-                  <div>
-                    <span className="font-bold text-white">{item.item}</span>
-                    <span className="text-slate-400 text-xs ml-2">({item.category})</span>
+              {filteredData.map(item => {
+                const daysRemaining = getDaysRemaining(item.stock, item.dailyUsage);
+                const highVelocity = isHighVelocity(item.dailyUsage);
+                return (
+                  <div key={item.id} className="flex justify-between items-center bg-slate-800 p-4 rounded-lg text-sm border-l-4 border-l-transparent">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white">{item.item}</span>
+                        {highVelocity && <span className="bg-amber-500/20 text-amber-400 text-[10px] px-1.5 py-0.5 rounded uppercase">Laju Tinggi</span>}
+                      </div>
+                      <span className="text-slate-400 text-xs">Kategori: {item.category} | Sisa: {daysRemaining} hari</span>
+                    </div>
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${item.status === 'Aman' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                      {item.status} (Stok: {item.stock})
+                    </span>
                   </div>
-                  <span className={`px-2 py-1 rounded text-xs font-semibold ${item.status === 'Aman' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                    {item.status} (Stok: {item.stock})
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

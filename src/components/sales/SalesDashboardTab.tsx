@@ -4,7 +4,8 @@ import {
   Clock,
   FileText,
   CheckCircle2,
-  RotateCw
+  RotateCw,
+  Truck
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -17,7 +18,9 @@ import {
   Tooltip,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  BarChart,
+  Bar
 } from 'recharts';
 
 // Data matching Screenshot 1
@@ -30,6 +33,13 @@ const WEEKLY_ACTIVITY_DATA = [
   { date: '24 Agu', tercatat: 45, selesai: 44 },
   { date: '31 Agu', tercatat: 49, selesai: 48 },
   { date: '7 Sep', tercatat: 49, selesai: 48 }
+];
+
+const WEEKLY_DELIVERY_DATA = [
+  { week: 'W1', avgDuration: 12.5, slaTarget: 10 },
+  { week: 'W2', avgDuration: 10.2, slaTarget: 10 },
+  { week: 'W3', avgDuration: 11.8, slaTarget: 10 },
+  { week: 'W4', avgDuration: 9.5, slaTarget: 10 },
 ];
 
 const SKILL_DISTRIBUTION_DATA = [
@@ -379,6 +389,46 @@ export const SalesDashboardTab: React.FC = () => {
                   activeDot={{ r: 6 }}
                 />
               </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Laporan Performa Pengiriman Mingguan */}
+        <div className="lg:col-span-6 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Truck className="w-4 h-4 text-indigo-500" />
+              <h3 className="text-sm font-bold text-slate-900">Performa Pengiriman Mingguan</h3>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">Durasi aktual vs Target SLA (jam)</p>
+          </div>
+
+          <div className="h-56 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={WEEKLY_DELIVERY_DATA} margin={{ top: 10, right: 15, left: -25, bottom: 0 }}>
+                <XAxis
+                  dataKey="week"
+                  tickLine={false}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    borderColor: '#1e293b',
+                    borderRadius: '8px',
+                    color: '#fff',
+                    fontSize: '12px'
+                  }}
+                />
+                <Bar dataKey="avgDuration" name="Durasi Aktual" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="slaTarget" name="Target SLA" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
