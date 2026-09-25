@@ -4,7 +4,7 @@ import { UserRole, UserProfile } from '../types';
 import { logisticsStore } from '../services/store';
 import { AkkLogo } from './AkkLogo';
 
-export type NavTab = 'dashboard' | 'operational_dashboard' | 'schedules' | 'fleets' | 'crew_history' | 'tracking_eval' | 'customer_map' | 'tracksolid' | 'architecture';
+export type NavTab = 'dashboard' | 'operational_dashboard' | 'schedules' | 'fleets' | 'crew_history' | 'tracking_eval' | 'customer_map' | 'tracksolid' | 'architecture' | 'hr_dashboard';
 
 interface NavigationProps {
   currentTab: NavTab;
@@ -46,6 +46,7 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onSelectTab 
     { id: 'tracking_eval' as NavTab, label: 'Evaluasi Jalur (Excel)', icon: FileSpreadsheet, badge: 'SheetJS' },
     { id: 'customer_map' as NavTab, label: 'Pemetaan Toko Retail', icon: Map, badge: '10 Outlet' },
     { id: 'tracksolid' as NavTab, label: 'Akses Tracksolid GPS', icon: Radio, badge: 'Live' },
+    { id: 'hr_dashboard' as NavTab, label: 'Dashboard HR', icon: Users, badge: null },
     { id: 'architecture' as NavTab, label: 'Skema SQL & Supabase', icon: Database, badge: 'RLS' },
   ].filter(item => {
     if (currentUser.role === 'sales_admin') {

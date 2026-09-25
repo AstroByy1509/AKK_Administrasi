@@ -1649,6 +1649,26 @@ class LogisticsStore {
       totalRecords: this.fuelLogs.length
     };
   }
+
+  // Swap Shift Methods
+  private swapShiftRequests: SwapShiftRequest[] = [];
+
+  public getSwapShiftRequests(): SwapShiftRequest[] {
+    return [...this.swapShiftRequests];
+  }
+
+  public submitSwapShiftRequest(req: Omit<SwapShiftRequest, 'id' | 'status' | 'requestedAt'>): SwapShiftRequest {
+    const newReq: SwapShiftRequest = {
+      ...req,
+      id: 'swp-' + Math.random().toString(36).substring(2, 9),
+      status: 'pending',
+      requestedAt: new Date().toISOString()
+    };
+    this.swapShiftRequests = [newReq, ...this.swapShiftRequests];
+    // Normally save to storage here if persistent
+    this.notify();
+    return newReq;
+  }
 }
 
 export const logisticsStore = new LogisticsStore();

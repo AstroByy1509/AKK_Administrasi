@@ -420,3 +420,21 @@ export interface DriverFuelScore {
   recommendation: string;
 }
 
+export interface AttendanceRecord {
+  id: string;
+  crewId: string;
+  date: string; // YYYY-MM-DD
+  status: 'present' | 'absent' | 'sick' | 'leave';
+  reason?: string;
+}
+
+export interface SwapShiftRequest {
+  id: string;
+  requesterCrewId: string;
+  targetCrewId: string;
+  scheduleId: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedAt: string;
+}
+

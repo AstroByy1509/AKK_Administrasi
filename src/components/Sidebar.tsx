@@ -5,6 +5,7 @@ import {
   Truck,
   MapPin,
   FileSpreadsheet,
+  FileText,
   Users,
   Database,
   Radio,
@@ -49,6 +50,7 @@ export type NavTab =
   | 'crew_history'
   | 'tracking_eval'
   | 'tracksolid'
+  | 'fleet_forms'
   | 'sales_dashboard'
   | 'sales_activities'
   | 'sales_schedules'
@@ -62,6 +64,8 @@ export type NavTab =
   | 'sales_kpi_omset'
   | 'customer_map'
   | 'purchasing_dashboard'
+  | 'purchasing_stock_overview'
+  | 'purchasing_stock_forecast'
   | 'hr_dashboard'
   | 'finance_dashboard'
   | 'warehouse_dashboard'
@@ -93,6 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSalesAdminOpen, setIsSalesAdminOpen] = useState(true);
   const [isKpiDropdownOpen, setIsKpiDropdownOpen] = useState(false);
   const [isPurchasingOpen, setIsPurchasingOpen] = useState(true);
+  const [isPurchasingStockOpen, setIsPurchasingStockOpen] = useState(false);
   const [isHrOpen, setIsHrOpen] = useState(true);
   const [isFinanceOpen, setIsFinanceOpen] = useState(true);
   const [isWarehouseOpen, setIsWarehouseOpen] = useState(true);
@@ -399,6 +404,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   'Akses Tracksolid GPS',
                   <Radio className="w-4 h-4" />
                 )}
+                {renderNavItem('fleet_forms', 'Formulir Armada', <FileText className="w-4 h-4" />)}
               </div>
             )}
           </div>
@@ -600,6 +606,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {(!isMinimized ? isPurchasingOpen : true) && (
               <div className={`space-y-1 ${!isMinimized ? 'pl-2 border-l border-rose-500/25 ml-2.5 my-1' : ''}`}>
                 {renderNavItem('purchasing_dashboard', 'Dashboard Pembelian', <ShoppingBag className="w-4 h-4" />)}
+                
+                {/* Stock Analysis Dropdown */}
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setIsPurchasingStockOpen(!isPurchasingStockOpen)}
+                    className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                      currentTab === 'purchasing_stock'
+                        ? 'bg-amber-500/10 text-amber-300 font-bold border border-amber-500/25'
+                        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Layers className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${currentTab === 'purchasing_stock' ? 'text-amber-400' : 'text-slate-400'}`} />
+                      <span className="truncate">Analisa Stok</span>
+                    </div>
+                    {isPurchasingStockOpen ? (
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                    )}
+                  </button>
+
+                  {isPurchasingStockOpen && (
+                    <div className="space-y-1 pl-4.5 border-l border-amber-500/15 ml-4 my-1">
+                      {renderNavItem('purchasing_stock_overview', 'Ringkasan Stok', <Database className="w-3.5 h-3.5" />)}
+                      {renderNavItem('purchasing_stock_forecast', 'Prediksi Kebutuhan', <TrendingUp className="w-3.5 h-3.5" />)}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

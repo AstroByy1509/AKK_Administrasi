@@ -419,7 +419,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             <form onSubmit={handleSaveStore} className="p-5 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">Kode Toko</label>
+                  <label className="text-slate-400 block mb-1">Kode Pelanggan</label>
                   <input
                     type="text"
                     required
@@ -435,10 +435,8 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                     onChange={(e) => setNewStore({ ...newStore, storeCategory: e.target.value as any })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   >
-                    <option value="Hypermarket">Hypermarket</option>
-                    <option value="Supermarket">Supermarket</option>
-                    <option value="Distribution Hub">Distribution Hub</option>
-                    <option value="Minimarket Cluster">Minimarket Cluster</option>
+                    <option value="Toko Retail">Toko Retail</option>
+                    <option value="Toko Grosir">Toko Grosir</option>
                   </select>
                 </div>
               </div>
@@ -521,29 +519,16 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-400 block mb-1">PIC Toko</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Pak / Ibu..."
-                    value={newStore.contactPerson}
-                    onChange={(e) => setNewStore({ ...newStore, contactPerson: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Nomor Telepon</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="+62 812..."
-                    value={newStore.phone}
-                    onChange={(e) => setNewStore({ ...newStore, phone: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
-                  />
-                </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Nomor Telepon</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="+62 812..."
+                  value={newStore.phone}
+                  onChange={(e) => setNewStore({ ...newStore, phone: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">

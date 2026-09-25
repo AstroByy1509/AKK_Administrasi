@@ -11,9 +11,11 @@ import { UserManagement } from './components/UserManagement';
 import { ExcelTrackingEvaluator } from './components/ExcelTrackingEvaluator';
 import { CustomerMapping } from './components/CustomerMapping';
 import { TracksolidGateway } from './components/TracksolidGateway';
+import { FleetFormCenter } from './components/FleetFormCenter';
 import { SupabaseSqlArchitecture } from './components/SupabaseSqlArchitecture';
 import { SalesAdminHub, SalesAdminSubTab } from './components/sales/SalesAdminHub';
 import { SalesKpi } from './components/sales/SalesKpi';
+import { PurchasingStockAnalysis } from './components/purchasing/PurchasingStockAnalysis';
 import { AuthModal } from './components/AuthModal';
 import { ThemeSwitcher } from './components/ThemeSwitcher';
 import { SystemActivityLog } from './components/SystemActivityLog';
@@ -85,6 +87,7 @@ export default function App() {
       case 'crew_history': return 'Riwayat Pengiriman & Audit SLA Kru';
       case 'tracking_eval': return 'Audit Evaluasi Muat & Bongkar (Excel)';
       case 'tracksolid': return 'Integrasi GPS Tracksolid Pro';
+      case 'fleet_forms': return 'Formulir Operasional Armada';
       case 'sales_dashboard': return 'Sales Hub: Dashboard & SLA Penjualan';
       case 'sales_activities': return 'Sales Hub: Aktivitas Harian Admin';
       case 'sales_schedules': return 'Sales Hub: Jadwal Produksi & Kirim';
@@ -100,6 +103,8 @@ export default function App() {
       case 'finance_dashboard': return 'Dashboard Departemen Finance & Tax';
       case 'warehouse_dashboard': return 'Dashboard Departemen Gudang';
       case 'purchasing_dashboard': return 'Dashboard Departemen Adm. Pembelian';
+      case 'purchasing_stock_overview': return 'Analisa Stok: Ringkasan & Status';
+      case 'purchasing_stock_forecast': return 'Analisa Stok: Prediksi Kebutuhan';
       case 'marketing_online': return 'Departemen Marketing: Prospek & Proaktif Online';
       case 'marketing_offline': return 'Departemen Marketing: Canvasing & Kunjungan Offline';
       case 'activity_log': return 'Audit Log & Aktivitas Sistem';
@@ -287,6 +292,10 @@ export default function App() {
             <TracksolidGateway />
           )}
 
+          {currentTab === 'fleet_forms' && (
+            <FleetFormCenter />
+          )}
+
           {currentTab === 'sales_dashboard' && (
             <SalesAdminHub
               activeSubTab="dashboard"
@@ -337,11 +346,23 @@ export default function App() {
             <SystemActivityLog />
           )}
 
-          {(currentTab === 'hr_dashboard' || 
-            currentTab === 'finance_dashboard' || 
-            currentTab === 'warehouse_dashboard' || 
-            currentTab === 'purchasing_dashboard') && (
-            <DepartmentDashboard />
+          {currentTab === 'hr_dashboard' && (
+            <DepartmentDashboard dashboardType="hr" />
+          )}
+          {currentTab === 'finance_dashboard' && (
+            <DepartmentDashboard dashboardType="finance" />
+          )}
+          {currentTab === 'warehouse_dashboard' && (
+            <DepartmentDashboard dashboardType="warehouse" />
+          )}
+          {currentTab === 'purchasing_dashboard' && (
+            <DepartmentDashboard dashboardType="purchasing" />
+          )}
+          {currentTab === 'purchasing_stock_overview' && (
+            <PurchasingStockAnalysis tab="overview" />
+          )}
+          {currentTab === 'purchasing_stock_forecast' && (
+            <PurchasingStockAnalysis tab="forecast" />
           )}
 
           {(currentTab === 'marketing_online' || currentTab === 'marketing_offline') && (

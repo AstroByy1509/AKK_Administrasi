@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { attendanceService } from '../services/attendanceService';
 import { 
   Users, 
   Truck, 
@@ -157,6 +158,35 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
 
   const driversList = useMemo(() => crews.filter(c => !c.role.includes('Helper') && c.role !== 'Kernet / Helper'), [crews]);
   const helpersList = useMemo(() => crews.filter(c => c.role.includes('Helper') || c.role === 'Kernet / Helper'), [crews]);
+
+  const todayDate = '2026-09-23';
+  const absentCrew = useMemo(() => {
+    return crews.filter(c => !attendanceService.isCrewAvailable(c.id, todayDate));
+  }, [crews, todayDate]);
+
+  const handleAutoAlignAttendance = () => {
+    setAllWeeksData(prev => {
+      const updatedWeek = prev[selectedWeek].map(route => {
+        const isDriverAbsent = !attendanceService.isCrewAvailable(route.driverId, todayDate);
+        const isHelperAbsent = !attendanceService.isCrewAvailable(route.helperId, todayDate);
+        
+        if (isDriverAbsent || isHelperAbsent) {
+          const availableDrivers = driversList.filter(d => attendanceService.isCrewAvailable(d.id, todayDate));
+          const availableHelpers = helpersList.filter(h => attendanceService.isCrewAvailable(h.id, todayDate));
+          
+          return {
+            ...route,
+            driverId: isDriverAbsent ? (availableDrivers[0]?.id || route.driverId) : route.driverId,
+            helperId: isHelperAbsent ? (availableHelpers[0]?.id || route.helperId) : route.helperId
+          };
+        }
+        return route;
+      });
+      return { ...prev, [selectedWeek]: updatedWeek };
+    });
+    setNotificationMsg(`✅ Jadwal diselaraskan dengan absensi hari ini (${todayDate}). Kru pengganti telah ditugaskan.`);
+    setTimeout(() => setNotificationMsg(null), 4000);
+  };
 
   // Initial intelligent assignment enforcing Rest Gap Rule
   const buildRestGapCompliantSchedule = (): DailyScheduleRoute[] => {
@@ -660,6 +690,26 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
             <div className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 p-3 rounded-xl flex items-center gap-2 font-medium animate-fade-in">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
               <span>{notificationMsg}</span>
+            </div>
+          )}
+
+          {absentCrew.length > 0 && (
+            <div className="bg-rose-500/15 border border-rose-500/30 text-rose-300 p-4 rounded-xl flex items-center justify-between gap-4 font-medium">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
+                <div>
+                  <div className="font-bold">⚠️ {absentCrew.length} Kru Tidak Masuk Hari Ini ({todayDate})</div>
+                  <div className="text-xs text-rose-200/80 mt-0.5">
+                    {absentCrew.map(c => c.name).join(', ')} sedang berhalangan hadir. Jadwal memerlukan penyesuaian.
+                  </div>
+                </div>
+              </div>
+              <button 
+                onClick={handleAutoAlignAttendance}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                Auto-Align Jadwal
+              </button>
             </div>
           )}
 

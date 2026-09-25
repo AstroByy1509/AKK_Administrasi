@@ -1005,6 +1005,25 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                     <td className="p-4 text-right flex items-center justify-end gap-2">
                       <button
                         onClick={() => {
+                          const targetCrewId = prompt('Masukkan ID Kru Target:');
+                          const reason = prompt('Alasan Swap Shift:');
+                          if (targetCrewId && reason) {
+                            logisticsStore.submitSwapShiftRequest({
+                              requesterCrewId: sch.crewId,
+                              targetCrewId,
+                              scheduleId: sch.id,
+                              reason
+                            });
+                            alert('Permintaan Swap Shift telah dikirim ke HR Admin.');
+                          }
+                        }}
+                        className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
+                        title="Ajukan Swap Shift"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
                           setNewSchedule({
                             trackingNumber: sch.trackingNumber,
                             storeId: sch.storeId,

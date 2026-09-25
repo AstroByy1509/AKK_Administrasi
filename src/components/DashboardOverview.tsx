@@ -30,6 +30,8 @@ import {
   ChevronRight,
   Wrench
 } from 'lucide-react';
+import { FleetPerformanceInsight } from './FleetPerformanceInsight';
+import { FleetTaxMonitoringPanel } from './FleetTaxMonitoringPanel';
 import { Schedule, Fleet, RetailStore, Crew, TracksolidDevice } from '../types';
 import { logisticsStore } from '../services/store';
 import { NavTab } from './Sidebar';
@@ -94,14 +96,84 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   const itemsPerPage = 5;
 
   useEffect(() => {
-    return logisticsStore.subscribe(() => {
-      setSchedules(logisticsStore.getSchedules());
-      setFleets(logisticsStore.getFleets());
-      setStores(logisticsStore.getStores());
-      setCrews(logisticsStore.getCrews());
-      setDevices(logisticsStore.getDevices());
-    });
-  }, []);
+    const checkCriticalSchedules = () => {
+      const schedules = logisticsStore.getSchedules();
+      const crews = logisticsStore.getCrews();
+
+      const today = new Date().toISOString().split('T')[0];
+      const criticalSchedulesToday = schedules.filter(s => 
+        s.status === 'scheduled' && 
+        s.isInterIsland && 
+        s.departureDate.startsWith(today)
+      );
+      
+      const availableBackupDrivers = crews.filter(c => c.role === 'Driver Cadangan' && c.status === 'available');
+
+      if (criticalSchedulesToday.length > 0 && availableBackupDrivers.length === 0) {
+        logisticsStore.emitNotification(
+          'schedule',
+          '⚠️ Peringatan Kritis: Kekurangan Driver Cadangan',
+          `Terdapat ${criticalSchedulesToday.length} jadwal pengiriman inter-island hari ini tanpa cadangan driver aktif.`,
+          true
+        );
+      }
+    };
+
+      const checkGeofencing = () => {
+        const devices = logisticsStore.getDevices();
+        const schedules = logisticsStore.getSchedules();
+        const stores = logisticsStore.getStores();
+
+        const RADIUS_KM = 5; // 5 km radius
+
+        schedules.forEach(schedule => {
+          if (schedule.status === 'in_transit' && schedule.storeId) {
+            const store = stores.find(s => s.id === schedule.storeId);
+            const device = devices.find(d => d.vehiclePlate === schedule.fleet?.plateNumber);
+
+            if (store && device) {
+              const distance = calculateDistance(
+                device.latitude,
+                device.longitude,
+                store.latitude,
+                store.longitude
+              );
+
+              if (distance > RADIUS_KM) {
+                logisticsStore.emitNotification(
+                  'geofence',
+                  '📍 Peringatan Geofencing',
+                  `Armada ${device.vehiclePlate} (${schedule.fleet?.plateNumber}) keluar dari radius area distribusi (${distance.toFixed(1)} km dari tujuan).`,
+                  true
+                );
+              }
+            }
+          }
+        });
+      };
+
+      const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371; // Earth radius in km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      };
+
+      return logisticsStore.subscribe(() => {
+        setSchedules(logisticsStore.getSchedules());
+        setFleets(logisticsStore.getFleets());
+        setStores(logisticsStore.getStores());
+        setCrews(logisticsStore.getCrews());
+        setDevices(logisticsStore.getDevices());
+        
+        checkCriticalSchedules();
+        checkGeofencing();
+      });
+    }, []);
 
   // Save filters to localStorage for persistence across tab navigation
   const handleMonthChange = (month: string) => {
@@ -1115,6 +1187,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
               <span>Buka Modul Admin Penjualan</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
+          </div>
+
+          <div className="col-span-1 md:col-span-2 lg:col-span-3">
+            <FleetPerformanceInsight />
+          </div>
+          
+          <div className="col-span-1 md:col-span-2 lg:col-span-3">
+            <FleetTaxMonitoringPanel />
           </div>
         </div>
       </div>
