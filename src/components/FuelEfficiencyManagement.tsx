@@ -33,7 +33,8 @@ import {
   ArrowUp,
   ArrowUpDown,
   Layers,
-  Activity
+  Activity,
+  FileSpreadsheet
 } from 'lucide-react';
 import {
   BarChart,
@@ -65,6 +66,8 @@ import {
   STANDARD_FUEL_PRICES,
   COMMON_GAS_STATIONS
 } from '../data/fuelMockData';
+import { FuelConsumptionReportModal } from './FuelConsumptionReportModal';
+import { FuelWeeklyReportView } from './FuelWeeklyReportView';
 
 interface FuelEfficiencyManagementProps {
   onNavigateToFleets?: () => void;
@@ -76,7 +79,8 @@ export const FuelEfficiencyManagement: React.FC<FuelEfficiencyManagementProps> =
   const [fuelLogs, setFuelLogs] = useState<FuelLog[]>(logisticsStore.getFuelLogs());
   const [fleets, setFleets] = useState<Fleet[]>(logisticsStore.getFleets());
   const [crews, setCrews] = useState<Crew[]>(logisticsStore.getCrews());
-  const [activeTab, setActiveTab] = useState<'overview' | 'daily' | 'liter_km' | 'leaderboard' | 'logs' | 'calculator'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'daily' | 'liter_km' | 'weekly_report' | 'leaderboard' | 'logs' | 'calculator'>('overview');
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // Daily Bar Chart Filter States
   const [dailyFleetFilter, setDailyFleetFilter] = useState<string>('all');
@@ -666,6 +670,18 @@ export const FuelEfficiencyManagement: React.FC<FuelEfficiencyManagementProps> =
             </button>
 
             <button
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition active:scale-95 cursor-pointer"
+              title="Export Laporan Konsumsi BBM Format PDF / Excel (Ringkasan Mingguan per Driver & Armada)"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Export Laporan BBM</span>
+              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-700/70 text-emerald-100 font-extrabold uppercase">
+                PDF/Excel
+              </span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('calculator')}
               className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition cursor-pointer"
             >
@@ -824,6 +840,21 @@ export const FuelEfficiencyManagement: React.FC<FuelEfficiencyManagementProps> =
             <span>Rata-rata Liter/KM Kendaraan</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/40 text-current">
               {fleetSummaries.length} Unit
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('weekly_report')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeTab === 'weekly_report'
+                ? 'bg-amber-500 text-slate-950 shadow-md'
+                : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>Laporan & Rekap Mingguan</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              PDF/Excel
             </span>
           </button>
 
@@ -2622,6 +2653,16 @@ export const FuelEfficiencyManagement: React.FC<FuelEfficiencyManagementProps> =
       )}
 
       {/* ========================================================================= */}
+      {/* 6. TAB: LAPORAN & REKAP MINGGUAN (PER DRIVER & ARMADA)                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'weekly_report' && (
+        <FuelWeeklyReportView
+          fuelLogs={fuelLogs}
+          onOpenExportModal={() => setIsExportModalOpen(true)}
+        />
+      )}
+
+      {/* ========================================================================= */}
       {/* 7. MODAL: CATAT PENGISIAN BBM BARU                                        */}
       {/* ========================================================================= */}
       {isAddModalOpen && (
@@ -2985,6 +3026,15 @@ export const FuelEfficiencyManagement: React.FC<FuelEfficiencyManagementProps> =
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* 9. MODAL: EXPORT LAPORAN KONSUMSI BBM (PDF / EXCEL)                       */}
+      {/* ========================================================================= */}
+      <FuelConsumptionReportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        fuelLogs={fuelLogs}
+      />
     </div>
   );
 };

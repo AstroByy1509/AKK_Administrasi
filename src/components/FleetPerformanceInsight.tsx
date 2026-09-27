@@ -8,7 +8,7 @@ export const FleetPerformanceInsight: React.FC = () => {
 
   const performanceData = useMemo(() => {
     return crews.map(crew => {
-      const crewSchedules = schedules.filter(s => s.crewId === crew.id && s.status === 'completed');
+      const crewSchedules = schedules.filter(s => s.crewId === crew.id && s.status === 'delivered');
       const totalTrips = crewSchedules.length;
       
       // Calculate a basic performance metric (e.g., successful trips / total assigned)

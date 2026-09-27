@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2 } from 'lucide-react';
+import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
+import { GoogleSheetsStoreSyncModal } from './GoogleSheetsStoreSyncModal';
+import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
 
 interface CustomerMappingProps {
   onScheduleForStore?: (store: RetailStore) => void;
@@ -10,6 +12,7 @@ interface CustomerMappingProps {
 
 export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForStore }) => {
   const [stores, setStores] = useState<RetailStore[]>(logisticsStore.getStores());
+  const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
   // State to hold selected week for route visualization
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [showRoutes, setShowRoutes] = useState<boolean>(true);
@@ -18,6 +21,21 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState<RetailStore | null>(null);
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+  const [isGoogleSheetsSyncOpen, setIsGoogleSheetsSyncOpen] = useState(false);
+
+  useEffect(() => {
+    const unsubStore = logisticsStore.subscribe(() => {
+      setStores(logisticsStore.getStores());
+    });
+    const unsubGsheets = googleSheetsSyncService.subscribe(() => {
+      setSyncConfig(googleSheetsSyncService.getConfig());
+      setStores(logisticsStore.getStores());
+    });
+    return () => {
+      unsubStore();
+      unsubGsheets();
+    };
+  }, []);
 
   // Helper to fetch routes for the selected week
   const routesForWeek = useMemo(() => {
@@ -41,7 +59,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     
     // Group routes by day to draw separate lines or all at once?
     // Let's draw all routes for the week, maybe color coded by day.
-    return routesForWeek.map(route => {
+    return routesForWeek.map((route: any) => {
       const store = stores.find(s => s.storeName === route.route) || stores.find(s => route.route.includes(s.storeName));
       if (store) {
         return {
@@ -50,7 +68,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
         };
       }
       return null;
-    }).filter(p => p !== null);
+    }).filter((p: any): p is { coords: [number, number][]; color: string } => p !== null);
   }, [routesForWeek, stores, showRoutes]);
 
   // Form State for new store
@@ -128,13 +146,25 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             </p>
           </div>
 
-          <button
-            onClick={() => setIsAddStoreOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition cursor-pointer self-start lg:self-center"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tambah Toko Retail Baru</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+            <button
+              onClick={() => setIsGoogleSheetsSyncOpen(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-800/90 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition cursor-pointer border border-emerald-500/50"
+              title="Atur & Sinkronkan Otomatis Data Google Sheets 'DATA FIX'"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-300 animate-pulse" />
+              <span>Google Sheets ({syncConfig.sheetName})</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping ml-0.5"></span>
+            </button>
+
+            <button
+              onClick={() => setIsAddStoreOpen(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Tambah Toko Retail Baru</span>
+            </button>
+          </div>
         </div>
 
         {/* Stats Row */}
@@ -255,7 +285,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 highlightIsland={selectedIsland}
                 heightClass="h-[520px]"
                 showWarehouse={true}
-                plannedPolyline={routePolylines.map(p => p.coords[1])}
+                plannedPolyline={routePolylines.map((p: any) => p.coords[1])}
               />
             </div>
           </div>
@@ -550,6 +580,12 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
           </div>
         </div>
       )}
+      {/* Modal Integrasi Google Sheets DATA FIX */}
+      <GoogleSheetsStoreSyncModal
+        isOpen={isGoogleSheetsSyncOpen}
+        onClose={() => setIsGoogleSheetsSyncOpen(false)}
+        onSuccessSync={() => setStores(logisticsStore.getStores())}
+      />
     </div>
   );
 };

@@ -9,7 +9,7 @@ import { logisticsStore } from '../services/store';
 
 export interface ToastNotification {
   id: string;
-  type: 'delivery' | 'checker' | 'schedule';
+  type: 'delivery' | 'checker' | 'schedule' | 'sla_warning' | 'geofence' | 'tax_kir_reminder';
   title: string;
   message: string;
   urgent?: boolean;
@@ -20,7 +20,7 @@ export interface ToastNotification {
 interface ToastContextType {
   notifications: ToastNotification[];
   visibleToasts: ToastNotification[];
-  addNotification: (type: 'delivery' | 'checker' | 'schedule', title: string, message: string, urgent?: boolean) => void;
+  addNotification: (type: 'delivery' | 'checker' | 'schedule' | 'sla_warning' | 'geofence' | 'tax_kir_reminder', title: string, message: string, urgent?: boolean) => void;
   removeToast: (id: string) => void;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
@@ -29,7 +29,7 @@ interface ToastContextType {
   setSoundEnabled: (enabled: boolean) => void;
   simulationEnabled: boolean;
   setSimulationEnabled: (enabled: boolean) => void;
-  triggerManualSimulation: (type: 'delivery' | 'checker' | 'schedule') => void;
+  triggerManualSimulation: (type: 'delivery' | 'checker' | 'schedule' | 'sla_warning') => void;
   onNavigateCallback?: (tab: string) => void;
   setOnNavigateCallback: (callback: (tab: string) => void) => void;
   isDrawerOpen: boolean;
@@ -148,7 +148,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [onNavigate, setOnNavigate] = useState<((tab: string) => void) | undefined>(undefined);
+  const onNavigateRef = useRef<((tab: string) => void) | undefined>(undefined);
+
+  const setOnNavigateCallback = useCallback((cb: (tab: string) => void) => {
+    onNavigateRef.current = cb;
+  }, []);
 
   // Keep state synced to localStorage
   useEffect(() => {
@@ -170,7 +174,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [simulationEnabled]);
 
   const addNotification = useCallback((
-    type: 'delivery' | 'checker' | 'schedule', 
+    type: 'delivery' | 'checker' | 'schedule' | 'sla_warning' | 'geofence' | 'tax_kir_reminder', 
     title: string, 
     message: string, 
     urgent?: boolean
@@ -180,7 +184,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       type,
       title,
       message,
-      urgent,
+      urgent: urgent ?? (type === 'sla_warning'),
       timestamp: new Date().toISOString(),
       read: false
     };
@@ -189,13 +193,13 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setVisibleToasts(prev => [...prev, newNotif]);
 
     if (soundEnabled) {
-      playChime(urgent ? 'urgent' : type === 'checker' ? 'success' : 'normal');
+      playChime(urgent || type === 'sla_warning' ? 'urgent' : type === 'checker' ? 'success' : 'normal');
     }
 
-    // Auto dismiss toasts after 6 seconds (or 10 seconds for urgent alerts)
+    // Auto dismiss toasts after 7 seconds (or 10 seconds for urgent alerts)
     setTimeout(() => {
       setVisibleToasts(prev => prev.filter(t => t.id !== newNotif.id));
-    }, urgent ? 10000 : 6000);
+    }, (urgent || type === 'sla_warning') ? 10000 : 7000);
   }, [soundEnabled]);
 
   const removeToast = useCallback((id: string) => {
@@ -226,10 +230,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [addNotification]);
 
   // Real-world Logistical Scenarios for PT AKK Simulation
-  const triggerManualSimulation = useCallback((type: 'delivery' | 'checker' | 'schedule') => {
+  const triggerManualSimulation = useCallback((type: 'delivery' | 'checker' | 'schedule' | 'sla_warning') => {
     const randomDrivers = ['Achmad Baihaqi', 'Sutrisno', 'Bambang Hermawan', 'M. Thoyib', 'Didik Prasetyo'];
-    const randomFleets = ['EL-01', 'DS-02', 'ES-03', 'DS-04', 'PB-05', 'DS-06'];
-    const randomStores = ['Banyuwangi Indah Box', 'Sritanjung Retail', 'Genteng Pack', 'Rogojampi Carton', 'Karton Raya Jember'];
+    const randomFleets = ['EL-01 (P 8381 VE)', 'DS-02 (P 8801 UV)', 'ES-03 (P 8848 U)', 'DS-04 (P 9677 VB)', 'PB-05 (P 8125 VC)', 'DS-06 (P 8509 VQ)'];
+    const randomStores = ['DC Retail Surabaya Rungkut', 'Transmart Buah Batu Bandung', 'Super Indo Majapahit Semarang', 'Mall Boemi Kedaton Lampung', 'Grand Lucky Supermarket Sanur Bali'];
     
     if (type === 'delivery') {
       const driver = randomDrivers[Math.floor(Math.random() * randomDrivers.length)];
@@ -278,6 +282,19 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         : `Info Logistik: Jadwal bongkar muat ${fleet} untuk ${store} dijadwal ulang karena penumpukan antrean di gate 3.`;
         
       addNotification('schedule', title, message, isUrgent);
+    } else if (type === 'sla_warning') {
+      const driver = randomDrivers[Math.floor(Math.random() * randomDrivers.length)];
+      const fleet = randomFleets[Math.floor(Math.random() * randomFleets.length)];
+      const store = randomStores[Math.floor(Math.random() * randomStores.length)];
+      const remainingMinutes = Math.floor(Math.random() * 30) + 15; // 15-45 minutes
+      const elapsedHours = (Math.random() * 3 + 6).toFixed(1);
+      
+      addNotification(
+        'sla_warning',
+        `⚠️ Peringatan Toleransi SLA: ${fleet}`,
+        `Waktu tempuh armada ${fleet} (${driver}) rute ke ${store} telah berjalan ${elapsedHours} jam dan mendekati batas toleransi SLA! Sisa toleransi waktu pengiriman tinggal ${remainingMinutes} menit sebelum melewati batas perjanjian layanan.`,
+        true
+      );
     }
   }, [addNotification]);
 
@@ -287,14 +304,14 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Generate first simulation after 10s
     const firstTimer = setTimeout(() => {
-      const types: Array<'delivery' | 'checker' | 'schedule'> = ['delivery', 'checker', 'schedule'];
+      const types: Array<'delivery' | 'checker' | 'schedule' | 'sla_warning'> = ['delivery', 'checker', 'schedule', 'sla_warning'];
       const rType = types[Math.floor(Math.random() * types.length)];
       triggerManualSimulation(rType);
     }, 10000);
 
     // Then interval every 40 seconds
     const interval = setInterval(() => {
-      const types: Array<'delivery' | 'checker' | 'schedule'> = ['delivery', 'checker', 'schedule'];
+      const types: Array<'delivery' | 'checker' | 'schedule' | 'sla_warning'> = ['delivery', 'checker', 'schedule', 'sla_warning'];
       const rType = types[Math.floor(Math.random() * types.length)];
       triggerManualSimulation(rType);
     }, 40000);
@@ -319,8 +336,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       simulationEnabled,
       setSimulationEnabled,
       triggerManualSimulation,
-      onNavigateCallback: onNavigate,
-      setOnNavigateCallback: setOnNavigate,
+      onNavigateCallback: onNavigateRef.current,
+      setOnNavigateCallback,
       isDrawerOpen,
       setIsDrawerOpen
     }}>
@@ -342,7 +359,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -20, scale: 0.95, transition: { duration: 0.2 } }}
                 className={`pointer-events-auto w-full p-4 rounded-xl border shadow-2xl flex gap-3.5 backdrop-blur-md relative overflow-hidden group ${
-                  isUrgent 
+                  toast.type === 'sla_warning'
+                    ? 'bg-slate-900/95 border-amber-500/80 ring-2 ring-amber-500/30 text-amber-50 shadow-amber-500/10'
+                    : toast.type === 'tax_kir_reminder'
+                    ? 'bg-slate-900/95 border-rose-500/80 ring-2 ring-rose-500/30 text-rose-50 shadow-rose-500/10'
+                    : isUrgent 
                     ? 'bg-rose-950/95 border-rose-600 ring-1 ring-rose-500/30 text-rose-50' 
                     : toast.type === 'checker'
                     ? 'bg-slate-900/95 border-amber-500/40 text-slate-100 ring-1 ring-amber-500/10'
@@ -353,7 +374,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               >
                 {/* Visual Accent Pulse Bar on Left Side */}
                 <div className={`absolute top-0 left-0 w-1.5 h-full ${
-                  isUrgent 
+                  toast.type === 'sla_warning'
+                    ? 'bg-gradient-to-b from-amber-400 to-rose-500 animate-pulse'
+                    : toast.type === 'tax_kir_reminder'
+                    ? 'bg-gradient-to-b from-rose-500 to-amber-500 animate-pulse'
+                    : isUrgent 
                     ? 'bg-rose-500 animate-pulse' 
                     : toast.type === 'checker'
                     ? 'bg-amber-500'
@@ -364,7 +389,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
                 {/* Left Side Status Icon */}
                 <div className={`p-2 rounded-lg shrink-0 flex items-center justify-center ${
-                  isUrgent 
+                  toast.type === 'sla_warning'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    : toast.type === 'tax_kir_reminder'
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                    : isUrgent 
                     ? 'bg-rose-500/20 text-rose-400' 
                     : toast.type === 'checker'
                     ? 'bg-amber-500/15 text-amber-400'
@@ -372,7 +401,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     ? 'bg-blue-500/15 text-blue-400'
                     : 'bg-emerald-500/15 text-emerald-400'
                 }`}>
-                  {isUrgent ? (
+                  {toast.type === 'sla_warning' ? (
+                    <Clock className="w-5 h-5 animate-pulse text-amber-400" />
+                  ) : toast.type === 'tax_kir_reminder' ? (
+                    <FileText className="w-5 h-5 animate-pulse text-rose-400" />
+                  ) : isUrgent ? (
                     <ShieldAlert className="w-5 h-5 animate-bounce" />
                   ) : toast.type === 'checker' ? (
                     <AlertTriangle className="w-5 h-5" />
@@ -389,11 +422,19 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     <span className="text-xs font-black tracking-tight leading-none">
                       {toast.title}
                     </span>
-                    {isUrgent && (
+                    {toast.type === 'sla_warning' ? (
+                      <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[9px] font-black tracking-wider uppercase animate-pulse">
+                        Batas SLA
+                      </span>
+                    ) : toast.type === 'tax_kir_reminder' ? (
+                      <span className="px-1.5 py-0.2 rounded bg-rose-500/25 border border-rose-500/40 text-rose-300 text-[9px] font-black tracking-wider uppercase animate-pulse">
+                        Pajak / KIR
+                      </span>
+                    ) : isUrgent ? (
                       <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-black tracking-wider uppercase animate-pulse">
                         Urgent
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <p className="text-[11px] text-slate-300 font-semibold mt-1.5 leading-relaxed break-words">
                     {toast.message}
@@ -406,19 +447,21 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                         // Mark as read
                         markAsRead(toast.id);
                         // Trigger route tab navigation via app's callback
-                        if (onNavigate) {
-                          if (toast.type === 'checker') onNavigate('sales_kpi_fines');
-                          else if (toast.type === 'schedule') onNavigate('schedules');
-                          else onNavigate('operational_dashboard');
+                        if (onNavigateRef.current) {
+                          if (toast.type === 'sla_warning') onNavigateRef.current('schedules');
+                          else if (toast.type === 'tax_kir_reminder') onNavigateRef.current('fleets');
+                          else if (toast.type === 'checker') onNavigateRef.current('sales_kpi_fines');
+                          else if (toast.type === 'schedule') onNavigateRef.current('schedules');
+                          else onNavigateRef.current('operational_dashboard');
                         }
                         // Close this toast
                         removeToast(toast.id);
                       }}
                       className={`text-[10px] font-black flex items-center gap-0.5 hover:underline cursor-pointer ${
-                        isUrgent ? 'text-rose-300 hover:text-rose-100' : 'text-amber-400 hover:text-amber-200'
+                        toast.type === 'sla_warning' ? 'text-amber-400 hover:text-amber-200' : toast.type === 'tax_kir_reminder' ? 'text-amber-400 hover:text-amber-200' : isUrgent ? 'text-rose-300 hover:text-rose-100' : 'text-amber-400 hover:text-amber-200'
                       }`}
                     >
-                      <span>Buka Panel Detail</span>
+                      <span>{toast.type === 'tax_kir_reminder' ? 'Buka Armada & Pajak / KIR' : 'Buka Pantauan Pengiriman'}</span>
                       <ChevronRight className="w-3 h-3" />
                     </button>
                     <span className="text-slate-600 text-[10px]">&bull;</span>
@@ -533,7 +576,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
                     Uji Coba Kirim Notifikasi Manual:
                   </div>
-                  <div className="grid grid-cols-3 gap-1.5 text-[10px] font-bold">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-bold">
                     <button
                       onClick={() => triggerManualSimulation('delivery')}
                       className="px-2 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 flex items-center justify-center gap-1 cursor-pointer"
@@ -554,6 +597,14 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     >
                       <Clock className="w-3 h-3 text-blue-400" />
                       <span>Jadwal</span>
+                    </button>
+                    <button
+                      onClick={() => triggerManualSimulation('sla_warning')}
+                      className="px-2 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 flex items-center justify-center gap-1 cursor-pointer"
+                      title="Uji coba peringatan armada mendekati batas toleransi SLA"
+                    >
+                      <Clock className="w-3 h-3 text-amber-400 animate-pulse" />
+                      <span>Batas SLA</span>
                     </button>
                   </div>
                 </div>
@@ -648,10 +699,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                               onClick={(e) => {
                                 e.stopPropagation();
                                 markAsRead(n.id);
-                                if (onNavigate) {
-                                  if (n.type === 'checker') onNavigate('sales_kpi_fines');
-                                  else if (n.type === 'schedule') onNavigate('schedules');
-                                  else onNavigate('operational_dashboard');
+                                if (onNavigateRef.current) {
+                                  if (n.type === 'checker') onNavigateRef.current('sales_kpi_fines');
+                                  else if (n.type === 'schedule') onNavigateRef.current('schedules');
+                                  else onNavigateRef.current('operational_dashboard');
                                 }
                                 setIsDrawerOpen(false);
                               }}

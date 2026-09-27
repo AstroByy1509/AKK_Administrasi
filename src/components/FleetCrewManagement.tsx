@@ -22,24 +22,29 @@ import {
   CreditCard,
   Droplets,
   Disc,
-  BatteryCharging
+  BatteryCharging,
+  Radio,
+  Gauge
 } from 'lucide-react';
 import { Fleet, Crew, VehicleType, FleetStatus, CrewStatus } from '../types';
 import { logisticsStore } from '../services/store';
 import { CrewDeliveryHistoryView } from './CrewDeliveryHistoryView';
+import { TireWearPredictionModule } from './TireWearPredictionModule';
 
 interface FleetCrewManagementProps {
   onNavigateToSpareParts?: () => void;
   onNavigateToFuelEfficiency?: () => void;
+  onNavigateToTracksolid?: () => void;
 }
 
 export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
   onNavigateToSpareParts,
-  onNavigateToFuelEfficiency
+  onNavigateToFuelEfficiency,
+  onNavigateToTracksolid
 }) => {
   const [fleets, setFleets] = useState<Fleet[]>(logisticsStore.getFleets());
   const [crews, setCrews] = useState<Crew[]>(logisticsStore.getCrews());
-  const [activeTab, setActiveTab] = useState<'fleets' | 'crews' | 'history'>('fleets');
+  const [activeTab, setActiveTab] = useState<'fleets' | 'crews' | 'history' | 'tire_wear'>('fleets');
   const [fleetFilter, setFleetFilter] = useState<string>('all');
   const [crewFilter, setCrewFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -322,6 +327,19 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                 Rotasi
               </span>
             </button>
+            <button
+              onClick={() => setActiveTab('tire_wear')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'tire_wear' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Disc className="w-3.5 h-3.5 text-amber-300" />
+              <span>Prediksi Keausan Ban</span>
+              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase flex items-center gap-1">
+                <Radio className="w-2.5 h-2.5 text-cyan-400 animate-pulse" />
+                Tracksolid
+              </span>
+            </button>
 
             {onNavigateToSpareParts && (
               <button
@@ -334,43 +352,45 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-64">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder={activeTab === 'fleets' ? 'Cari plat / tipe...' : 'Cari nama kru...'}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              >
-              </input>
-            </div>
+          {(activeTab === 'fleets' || activeTab === 'crews') && (
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder={activeTab === 'fleets' ? 'Cari plat / tipe...' : 'Cari nama kru...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                >
+                </input>
+              </div>
 
-            {activeTab === 'fleets' ? (
-              <select
-                value={fleetFilter}
-                onChange={(e) => setFleetFilter(e.target.value)}
-                className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none"
-              >
-                <option value="all">Semua Status</option>
-                <option value="available">Available</option>
-                <option value="on-duty">On-Duty</option>
-                <option value="maintenance">Maintenance</option>
-              </select>
-            ) : (
-              <select
-                value={crewFilter}
-                onChange={(e) => setCrewFilter(e.target.value)}
-                className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none"
-              >
-                <option value="all">Semua Status</option>
-                <option value="available">Available</option>
-                <option value="on-duty">On-Duty</option>
-                <option value="off">Off / Libur</option>
-              </select>
-            )}
-          </div>
+              {activeTab === 'fleets' ? (
+                <select
+                  value={fleetFilter}
+                  onChange={(e) => setFleetFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none"
+                >
+                  <option value="all">Semua Status</option>
+                  <option value="available">Available</option>
+                  <option value="on-duty">On-Duty</option>
+                  <option value="maintenance">Maintenance</option>
+                </select>
+              ) : (
+                <select
+                  value={crewFilter}
+                  onChange={(e) => setCrewFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none"
+                >
+                  <option value="all">Semua Status</option>
+                  <option value="available">Available</option>
+                  <option value="on-duty">On-Duty</option>
+                  <option value="off">Off / Libur</option>
+                </select>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -545,9 +565,13 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
                             </span>
                           </div>
 
-                          <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800 text-center">
-                            <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400 mb-0.5">
-                              <Disc className="w-3 h-3 text-emerald-400" />
+                          <div
+                            onClick={() => setActiveTab('tire_wear')}
+                            className="bg-slate-900/80 p-1.5 rounded border border-slate-800 text-center cursor-pointer hover:border-amber-500/50 hover:bg-slate-850 transition group"
+                            title="Klik untuk membuka Modul Prediksi Keausan Ban dari GPS Tracksolid"
+                          >
+                            <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400 group-hover:text-amber-400 mb-0.5">
+                              <Disc className="w-3 h-3 text-emerald-400 group-hover:text-amber-400" />
                               <span>Ban</span>
                             </div>
                             <span className={`text-[9px] font-bold px-1 py-0.2 rounded border block truncate ${
@@ -738,6 +762,14 @@ export const FleetCrewManagement: React.FC<FleetCrewManagementProps> = ({
       {/* History & Area Approval Tab Content */}
       {activeTab === 'history' && (
         <CrewDeliveryHistoryView />
+      )}
+
+      {/* Tire Wear Prediction Tab Content */}
+      {activeTab === 'tire_wear' && (
+        <TireWearPredictionModule
+          onNavigateToSpareParts={onNavigateToSpareParts}
+          onNavigateToTracksolid={onNavigateToTracksolid}
+        />
       )}
 
       {/* Add Fleet Modal */}

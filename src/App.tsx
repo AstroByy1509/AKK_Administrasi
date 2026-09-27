@@ -262,6 +262,7 @@ export default function App() {
             <FleetCrewManagement
               onNavigateToSpareParts={() => setCurrentTab('spareparts')}
               onNavigateToFuelEfficiency={() => setCurrentTab('fuel_efficiency')}
+              onNavigateToTracksolid={() => setCurrentTab('tracksolid')}
             />
           )}
 

@@ -24,7 +24,12 @@ import {
   EfficiencyStatus,
   FleetFuelSummary,
   DriverFuelScore,
-  ShipmentStatus
+  ShipmentStatus,
+  SwapShiftRequest,
+  FleetTireWearPrediction,
+  TaxKirReminderItem,
+  TaxKirType,
+  TaxKirUrgency
 } from '../types';
 import {
   INITIAL_FLEETS,
@@ -431,7 +436,7 @@ class LogisticsStore {
     };
   }
 
-  public emitNotification(type: 'delivery' | 'checker' | 'schedule', title: string, message: string, urgent?: boolean, data?: any) {
+  public emitNotification(type: 'delivery' | 'checker' | 'schedule' | 'sla_warning' | 'geofence', title: string, message: string, urgent?: boolean, data?: any) {
     this.notificationListeners.forEach(l => l({ type, title, message, urgent, data }));
   }
 
@@ -1668,6 +1673,154 @@ class LogisticsStore {
     // Normally save to storage here if persistent
     this.notify();
     return newReq;
+  }
+
+  // ==========================================
+  // TIRE WEAR PREDICTION (PREDIKSI KEAUSAN BAN)
+  // Berdasarkan total jarak tempuh harian armada dari Tracksolid
+  // ==========================================
+  public getFleetTireWearPredictions(): FleetTireWearPrediction[] {
+    const devices = this.getDevices();
+    const tireUsages = this.sparePartUsages.filter(u => u.category === 'ban');
+    const now = new Date();
+
+    return this.fleets.map(fleet => {
+      // Find matching Tracksolid GPS device
+      const matchedDevice = devices.find(d =>
+        d.vehiclePlate.toLowerCase().replace(/\s+/g, '') === fleet.plateNumber.toLowerCase().replace(/\s+/g, '') ||
+        (fleet.gpsImei && d.imei === fleet.gpsImei) ||
+        (fleet.initialCode && d.vehicleName && d.vehicleName.toLowerCase().includes(fleet.initialCode.toLowerCase().split('/')[0].trim()))
+      );
+
+      // Total daily mileage from Tracksolid (todayMileageKm)
+      // If Tracksolid has 0 or unavailable, fall back to realistic daily route average
+      const dailyMileage = matchedDevice?.todayMileageKm && matchedDevice.todayMileageKm > 0
+        ? matchedDevice.todayMileageKm
+        : fleet.status === 'on-duty' ? 88.5 : fleet.status === 'available' ? 42.0 : 0;
+
+      // Find latest tire change record from spare parts usage
+      const latestUsage = tireUsages
+        .filter(u => u.fleetId === fleet.id || u.plateNumber.toLowerCase().replace(/\s+/g, '') === fleet.plateNumber.toLowerCase().replace(/\s+/g, ''))
+        .sort((a, b) => new Date(b.replacementDate).getTime() - new Date(a.replacementDate).getTime())[0];
+
+      // Fleet specific parameters
+      const isPickUp = fleet.vehicleType === 'Pick Up Box';
+      const isDouble = fleet.vehicleType === 'Double STD';
+      const isEngkel = fleet.vehicleType === 'Engkel STD' || fleet.vehicleType === 'Engkel Long';
+
+      const initialTreadDepthMm = isPickUp ? 10.0 : isDouble ? 15.0 : 13.0; // Ketebalan tapak ban baru
+      const minTreadDepthLegalMm = 2.0; // Batas minimal alur ban aman (legal limit 1.6mm - safety limit 2.0mm)
+      const usableTreadDepthMm = initialTreadDepthMm - minTreadDepthLegalMm;
+
+      // Tire brand & model
+      const tireBrandModel = isPickUp 
+        ? 'Bridgestone Ecopia R156 8PR' 
+        : isDouble 
+        ? 'Gajah Tunggal Super Lug Heavy Duty' 
+        : 'Michelin X Multi Z Radial';
+
+      const tireSize = isPickUp 
+        ? '185/80 R14' 
+        : isDouble 
+        ? '7.50-16 14PR' 
+        : '7.50-16 12PR';
+
+      const maxLifespanKm = isPickUp ? 45000 : isDouble ? 60000 : 55000;
+      const currentOdo = fleet.odometerKm || 50000;
+      
+      // Determine installed kilometer
+      const installedAtKm = latestUsage ? latestUsage.odometerKm : Math.max(0, currentOdo - (currentOdo % maxLifespanKm));
+      const accumulatedKm = Math.max(1200, currentOdo - installedAtKm);
+      const remainingKm = Math.max(0, maxLifespanKm - accumulatedKm);
+      
+      // Calculate wear percentage (0% to 100%)
+      const wearPercentage = Math.min(100, Number(((accumulatedKm / maxLifespanKm) * 100).toFixed(1)));
+      const healthScore = Math.max(0, Number((100 - wearPercentage).toFixed(1)));
+
+      // Current tread depth based on accumulated mileage
+      const treadConsumedMm = (accumulatedKm / maxLifespanKm) * usableTreadDepthMm;
+      const currentTreadDepthMm = Math.max(minTreadDepthLegalMm, Number((initialTreadDepthMm - treadConsumedMm).toFixed(2)));
+
+      // Daily wear rate (mm per day) based on Tracksolid daily mileage
+      // Formula: (usableTreadDepthMm / maxLifespanKm) * dailyMileage
+      const dailyWearRateMm = dailyMileage > 0 
+        ? Number(((usableTreadDepthMm / maxLifespanKm) * dailyMileage).toFixed(4)) 
+        : 0.005;
+
+      // Estimated days remaining until replacement
+      const effectiveDailyKm = Math.max(dailyMileage, 35);
+      const estimatedDaysRemaining = remainingKm > 0 
+        ? Math.round(remainingKm / effectiveDailyKm) 
+        : 0;
+
+      // Projected replacement date
+      const projectedDate = new Date(now.getTime() + estimatedDaysRemaining * 24 * 60 * 60 * 1000);
+      const projectedReplacementDate = projectedDate.toISOString().substring(0, 10);
+
+      // Rotation due every 10,000 km
+      const rotationIntervalKm = 10000;
+      const rotationDueKm = installedAtKm + (Math.floor(accumulatedKm / rotationIntervalKm) + 1) * rotationIntervalKm;
+      const isRotationNeeded = (accumulatedKm % rotationIntervalKm) >= 8500;
+
+      // Tire status logic
+      let status: 'Optimal' | 'Waspada' | 'Kritis' = 'Optimal';
+      let statusLabel = 'Kondisi Prima';
+      let recommendation = 'Tekanan angin stabil, lanjutkan pemantauan harian.';
+
+      if (remainingKm <= 3500 || currentTreadDepthMm <= 3.0 || wearPercentage >= 85) {
+        status = 'Kritis';
+        statusLabel = 'Wajib Ganti Segera';
+        recommendation = `Alur tapak ban menipis (${currentTreadDepthMm} mm). Segera jadwalkan penggantian ban baru di gudang sparepart sebelum muatan berat.`;
+      } else if (remainingKm <= 9000 || currentTreadDepthMm <= 5.0 || wearPercentage >= 65) {
+        status = 'Waspada';
+        statusLabel = 'Perlu Rotasi & Jadwal Ganti';
+        recommendation = isRotationNeeded 
+          ? `Disarankan rotasi ban silang (depan-belakang) pada ${rotationDueKm.toLocaleString('id-ID')} KM untuk mencegah aus tidak merata.`
+          : `Ban masuk fase aus moderat. Pantau tekanan angin mingguan dan batasi beban overload.`;
+      } else {
+        status = 'Optimal';
+        statusLabel = 'Kondisi Prima';
+        recommendation = `Ban dalam performa terbaik (${healthScore}% health). Rekomendasi rotasi berikutnya pada ${rotationDueKm.toLocaleString('id-ID')} KM.`;
+      }
+
+      // Pressure (PSI)
+      const recommendedPressurePsi = isPickUp ? 45 : isDouble ? 95 : 85;
+      const pressureOffset = status === 'Kritis' ? -8 : status === 'Waspada' ? -4 : 0;
+      const pressurePsi = recommendedPressurePsi + pressureOffset;
+
+      return {
+        fleetId: fleet.id,
+        plateNumber: fleet.plateNumber,
+        initialCode: fleet.initialCode,
+        vehicleType: fleet.vehicleType,
+        brand: fleet.brand || 'Mitsubishi',
+        currentOdometerKm: currentOdo,
+        todayMileageKm: Number(dailyMileage.toFixed(2)),
+        trackedImei: matchedDevice?.imei,
+        isGpsOnline: matchedDevice ? (matchedDevice.status === 'Online' || matchedDevice.status === 'Sleeping') : false,
+        tireBrandModel,
+        tireSize,
+        initialTreadDepthMm,
+        currentTreadDepthMm,
+        minTreadDepthLegalMm,
+        installedAtKm,
+        accumulatedKm,
+        maxLifespanKm,
+        remainingKm,
+        wearPercentage,
+        healthScore,
+        dailyWearRateMm,
+        estimatedDaysRemaining,
+        projectedReplacementDate,
+        status,
+        statusLabel,
+        recommendation,
+        rotationDueKm,
+        isRotationNeeded,
+        pressurePsi,
+        recommendedPressurePsi
+      };
+    });
   }
 }
 

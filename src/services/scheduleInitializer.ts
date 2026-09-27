@@ -74,6 +74,7 @@ export interface SmartFillOptions {
   overwriteExisting?: boolean;
   autoAssignFerryTicket?: boolean;
   enforce24hGap?: boolean;
+  isUrgent?: boolean; // Override flag for out-of-town restriction on local-only crew
 }
 
 export interface SmartFillValidationConflict {
@@ -289,35 +290,55 @@ export class ScheduleInitializerService {
         }
       }
 
-      // Crew Assignment Anti-Fatigue logic
-      let driverIdx = 0;
-      let helperIdx = 0;
+      // Crew Assignment Anti-Fatigue logic with Out-of-Town & Forbidden Pairing constraints
+      let eligibleDrivers = drivers;
+      if (config.isLuarKota && !options.isUrgent) {
+        // Exclude drivers restricted to local Banyuwangi only
+        const allowed = drivers.filter(d => d.allowOutofTown !== false);
+        if (allowed.length > 0) eligibleDrivers = allowed;
+      }
 
+      let driverIdx = 0;
       if (config.isLuarKota) {
         if (config.dayName === 'Senin') {
           const lkOrder = idx % 4;
-          driverIdx = lkOrder % (drivers.length || 1);
+          driverIdx = lkOrder % (eligibleDrivers.length || 1);
         } else if (config.dayName === 'Selasa') {
           const lkOrder = idx % 2;
-          driverIdx = (4 + lkOrder) % (drivers.length || 1);
+          driverIdx = (4 + lkOrder) % (eligibleDrivers.length || 1);
         } else if (config.dayName === 'Rabu') {
           const lkOrder = idx % 2;
-          driverIdx = lkOrder % (drivers.length || 1);
+          driverIdx = lkOrder % (eligibleDrivers.length || 1);
         } else if (config.dayName === 'Kamis') {
           const lkOrder = idx % 3;
-          driverIdx = (2 + lkOrder) % (drivers.length || 1);
+          driverIdx = (2 + lkOrder) % (eligibleDrivers.length || 1);
         } else if (config.dayName === 'Sabtu') {
           const lkOrder = idx % 2;
-          driverIdx = (lkOrder === 0 ? 0 : 5) % (drivers.length || 1);
+          driverIdx = (lkOrder === 0 ? 0 : 5) % (eligibleDrivers.length || 1);
         }
-        helperIdx = driverIdx % (helpers.length || 1);
       } else {
-        driverIdx = (idx * 2 + 1) % (drivers.length || 1);
-        helperIdx = (idx * 3 + 2) % (helpers.length || 1);
+        driverIdx = (idx * 2 + 1) % (eligibleDrivers.length || 1);
       }
 
-      const driver = drivers[driverIdx] || drivers[0];
-      const helper = helpers[helperIdx] || helpers[0];
+      const driver = eligibleDrivers[driverIdx] || drivers[0];
+
+      // Helper assignment with out-of-town & forbidden pairing checks
+      let eligibleHelpers = helpers;
+      if (config.isLuarKota && !options.isUrgent) {
+        eligibleHelpers = helpers.filter(h => h.allowOutofTown !== false);
+        if (eligibleHelpers.length === 0) eligibleHelpers = helpers;
+      }
+
+      // Exclude helpers forbidden to pair with this driver
+      const compatibleHelpers = eligibleHelpers.filter(h => {
+        const driverForbidden = driver.forbiddenPairCrewIds && driver.forbiddenPairCrewIds.includes(h.id);
+        const helperForbidden = h.forbiddenPairCrewIds && h.forbiddenPairCrewIds.includes(driver.id);
+        return !driverForbidden && !helperForbidden;
+      });
+
+      const activeHelpers = compatibleHelpers.length > 0 ? compatibleHelpers : eligibleHelpers;
+      const helperIdx = (driverIdx * 3 + 2) % (activeHelpers.length || 1);
+      const helper = activeHelpers[helperIdx] || helpers[0];
 
       // Fleet Allocation by Cargo Weight
       const suitableFleet = existingFleets.find(f => {

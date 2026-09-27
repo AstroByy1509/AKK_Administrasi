@@ -35,11 +35,32 @@ export interface Fleet {
   engineCc?: string;
   taxDueDate?: string; // Tanggal Jatuh Tempo Pajak (Tahunan)
   stnkExpiryDate?: string; // Masa Berlaku STNK / Plat (5 Tahunan)
+  kirExpiryDate?: string; // Masa Berlaku Uji KIR Dishub (6 Bulanan / Berkala)
   // Optional backwards compatibility fields
   tonnageCapacity?: number;
   currentTonnage?: number;
   fuelLevelPercent?: number;
   odometerKm?: number;
+}
+
+export type TaxKirType = 'tax' | 'stnk' | 'kir';
+export type TaxKirUrgency = 'expired' | 'critical' | 'warning' | 'safe';
+
+export interface TaxKirReminderItem {
+  id: string; // `${fleetId}-${type}`
+  fleetId: string;
+  plateNumber: string;
+  initialCode?: string;
+  vehicleType: VehicleType;
+  brand?: string;
+  type: TaxKirType;
+  typeLabel: string; // 'Pajak Tahunan', 'STNK / Plat (5 Thn)', 'Uji KIR Dishub'
+  dueDate: string;
+  daysRemaining: number;
+  urgency: TaxKirUrgency;
+  statusLabel: string;
+  badgeColor: string;
+  cycleIntervalLabel: string; // '1 Tahun', '5 Tahun', '6 Bulan'
 }
 
 export interface Crew {
@@ -55,6 +76,8 @@ export interface Crew {
   rating: number; // e.g. 4.8 / 5
   certifications?: string[];
   routeExperience?: string[];
+  allowOutofTown?: boolean; // false = Banyuwangi local only, unless urgent override
+  forbiddenPairCrewIds?: string[]; // IDs of crew members they cannot be paired with
 }
 
 export interface RetailStore {
@@ -100,6 +123,7 @@ export interface Schedule {
   areaApprovalStatus?: 'approved' | 'pending' | 'not_required';
   areaTripCount?: number;
   areaName?: string;
+  isUrgentOverride?: boolean; // Override flag for local-only crew assigned to out-of-town routes
 }
 
 export interface CrewDeliveryHistory {
@@ -436,5 +460,41 @@ export interface SwapShiftRequest {
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   requestedAt: string;
+}
+
+export type TirePosition = 'Depan Kiri' | 'Depan Kanan' | 'Belakang Kiri Luar' | 'Belakang Kiri Dalam' | 'Belakang Kanan Luar' | 'Belakang Kanan Dalam' | 'Serep';
+export type TireConditionStatus = 'Optimal' | 'Waspada' | 'Kritis';
+
+export interface FleetTireWearPrediction {
+  fleetId: string;
+  plateNumber: string;
+  initialCode?: string;
+  vehicleType: VehicleType;
+  brand: string;
+  currentOdometerKm: number;
+  todayMileageKm: number;
+  trackedImei?: string;
+  isGpsOnline: boolean;
+  tireBrandModel: string;
+  tireSize: string;
+  initialTreadDepthMm: number; // e.g. 14.0 mm for commercial truck tires
+  currentTreadDepthMm: number; // e.g. 6.8 mm
+  minTreadDepthLegalMm: number; // 1.6 mm or safety 3.0 mm
+  installedAtKm: number; // Kilometer when tire was installed
+  accumulatedKm: number; // Total km driven on this tire set
+  maxLifespanKm: number; // Standard lifespan (e.g. 50,000 - 60,000 km)
+  remainingKm: number; // Remaining usable km
+  wearPercentage: number; // 0% (new) to 100% (completely worn)
+  healthScore: number; // 100% down to 0%
+  dailyWearRateMm: number; // mm wear per day based on tracksolid mileage
+  estimatedDaysRemaining: number; // Estimated days until replacement needed
+  projectedReplacementDate: string; // YYYY-MM-DD
+  status: TireConditionStatus;
+  statusLabel: string;
+  recommendation: string;
+  rotationDueKm: number; // Next tire rotation mileage
+  isRotationNeeded: boolean;
+  pressurePsi: number; // Sensor / inspection PSI
+  recommendedPressurePsi: number;
 }
 

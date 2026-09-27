@@ -51,6 +51,7 @@ export const SmartFillModal: React.FC<SmartFillModalProps> = ({
   const [overwriteExisting, setOverwriteExisting] = useState<boolean>(true);
   const [autoAssignFerry, setAutoAssignFerry] = useState<boolean>(true);
   const [enforce24hGap, setEnforce24hGap] = useState<boolean>(true);
+  const [isUrgentOverride, setIsUrgentOverride] = useState<boolean>(false);
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'conflicts' | 'patterns'>('preview');
@@ -135,7 +136,8 @@ export const SmartFillModal: React.FC<SmartFillModalProps> = ({
           selectedDays: fillMode === 'custom_days' ? selectedDays : undefined,
           overwriteExisting,
           autoAssignFerryTicket: autoAssignFerry,
-          enforce24hGap
+          enforce24hGap,
+          isUrgent: isUrgentOverride
         };
 
         const result = ScheduleInitializerService.runSmartFill(options);
@@ -430,6 +432,21 @@ export const SmartFillModal: React.FC<SmartFillModalProps> = ({
                   <span className="font-bold text-white">Sinkronisasi & Perbarui Jadwal yang Sudah Ada (Overwrite)</span>
                   <p className="text-[11px] text-slate-400">
                     Jika tidak dicentang, sistem hanya akan menambahkan rute yang belum pernah dibuat pada minggu target.
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/30 cursor-pointer hover:bg-rose-950/50 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={isUrgentOverride}
+                  onChange={(e) => setIsUrgentOverride(e.target.checked)}
+                  className="mt-0.5 rounded text-rose-600 focus:ring-0 cursor-pointer"
+                />
+                <div>
+                  <span className="font-bold text-rose-300">🚨 Mode Urgent: Izinkan Kru Lokal Dikirim ke Luar Kota (Bypass Larangan Luar Kota)</span>
+                  <p className="text-[11px] text-slate-400">
+                    Jika diaktifkan, kru yang dibatasi khusus area Banyuwangi (lokal) akan diizinkan menerima penugasan luar kota dalam kondisi mendesak/darurat.
                   </p>
                 </div>
               </label>

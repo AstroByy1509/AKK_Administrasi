@@ -45,7 +45,7 @@ export interface DayReadinessConflict {
   isLuarKota: boolean;
   driverId: string;
   driverName: string;
-  conflictType: 'gap_under_24h' | 'consecutive_outbound' | 'unassigned_driver' | 'fleet_maintenance' | 'missing_ferry_ticket';
+  conflictType: 'gap_under_24h' | 'consecutive_outbound' | 'unassigned_driver' | 'fleet_maintenance' | 'missing_ferry_ticket' | 'forbidden_pairing' | 'out_of_town_restricted';
   gapHours?: number;
   previousTrip?: {
     trackingNumber: string;
@@ -188,6 +188,62 @@ export const NextDayReadinessPanel: React.FC<NextDayReadinessPanelProps> = ({
           recommendedSubstitutes: [],
           description: 'Rute lintas pulau (Bali) belum memiliki kode booking tiket kapal ASDP Ketapang-Gilimanuk.'
         });
+      }
+
+      // Check 4: Forbidden Pairing (Blacklist Driver & Helper)
+      if (currentSched.crewId && currentSched.crewHelperId) {
+        const driverObj = crews.find(c => c.id === currentSched.crewId);
+        const helperObj = crews.find(c => c.id === currentSched.crewHelperId);
+
+        const isDriverForbidden = driverObj?.forbiddenPairCrewIds && driverObj.forbiddenPairCrewIds.includes(currentSched.crewHelperId);
+        const isHelperForbidden = helperObj?.forbiddenPairCrewIds && helperObj.forbiddenPairCrewIds.includes(currentSched.crewId);
+
+        if (isDriverForbidden || isHelperForbidden) {
+          const helpers = crews.filter(c => c.role.includes('Helper') || c.role === 'Kernet / Helper');
+          const availableHelpers = helpers.filter((h: Crew) => {
+            const driverBlacklist = driverObj?.forbiddenPairCrewIds || [];
+            const helperBlacklist = h.forbiddenPairCrewIds || [];
+            return !driverBlacklist.includes(h.id) && !helperBlacklist.includes(driverObj?.id || '');
+          });
+
+          conflicts.push({
+            scheduleId: currentSched.id,
+            trackingNumber: currentSched.trackingNumber,
+            destination: currentSched.store?.storeName || currentSched.storeId,
+            departureTime: currentSched.departureDate,
+            isLuarKota: isOutbound,
+            driverId: currentSched.crewId,
+            driverName: currentSched.crew?.name || 'Supir',
+            conflictType: 'forbidden_pairing' as any,
+            recommendedSubstitutes: availableHelpers.slice(0, 3) as any,
+            description: `🚨 PELANGGARAN PASANGAN TERLARANG (BLACKLIST): Supir (${driverObj?.name || 'Supir'}) dan Helper (${helperObj?.name || 'Helper'}) masuk dalam daftar hitam dan tidak boleh berpasangan!`
+          });
+        }
+      }
+
+      // Check 5: Out-of-Town Restriction for local-only drivers
+      if (currentSched.crewId && isOutbound && !currentSched.isUrgentOverride) {
+        const driverObj = crews.find(c => c.id === currentSched.crewId);
+        if (driverObj && driverObj.allowOutofTown === false) {
+          const availableDrivers = drivers.filter(d => {
+            if (d.allowOutofTown === false) return false;
+            const dayTrips = targetDaySchedules.filter(ts => ts.crewId === d.id);
+            return dayTrips.length === 0;
+          });
+
+          conflicts.push({
+            scheduleId: currentSched.id,
+            trackingNumber: currentSched.trackingNumber,
+            destination: currentSched.store?.storeName || currentSched.storeId,
+            departureTime: currentSched.departureDate,
+            isLuarKota: isOutbound,
+            driverId: currentSched.crewId,
+            driverName: driverObj.name,
+            conflictType: 'out_of_town_restricted' as any,
+            recommendedSubstitutes: availableDrivers.slice(0, 3),
+            description: `🚨 PELANGGARAN RUTE LUAR KOTA: Supir (${driverObj.name}) dibatasi khusus area Lokal Banyuwangi (tidak boleh kirim luar kota ke ${currentSched.store?.storeName || currentSched.storeId}), kecuali tombol 'Override Darurat' ditekan.`
+          });
+        }
       }
 
       // Check 3: 24-Hour Gap Audit from previous trips (specifically previous outbound trip)
@@ -367,6 +423,17 @@ export const NextDayReadinessPanel: React.FC<NextDayReadinessPanelProps> = ({
 
     if (onSchedulesUpdated) onSchedulesUpdated();
     setActionFeedback(`✅ Berhasil menugaskan ${selectedCrew.name} untuk jadwal.`);
+    setTimeout(() => setActionFeedback(null), 4000);
+  };
+
+  // Handler: Toggle Emergency Override for out-of-town restriction
+  const handleToggleEmergencyOverride = (scheduleId: string) => {
+    const target = schedules.find(s => s.id === scheduleId);
+    if (!target) return;
+    const nextVal = !target.isUrgentOverride;
+    logisticsStore.updateSchedule(scheduleId, { isUrgentOverride: nextVal } as any);
+    if (onSchedulesUpdated) onSchedulesUpdated();
+    setActionFeedback(`🚨 Override Darurat ${nextVal ? 'DIAKTIFKAN (Bypass Larangan Luar Kota)' : 'DINONAKTIFKAN'} untuk rute ${target.trackingNumber}`);
     setTimeout(() => setActionFeedback(null), 4000);
   };
 
@@ -733,29 +800,41 @@ export const NextDayReadinessPanel: React.FC<NextDayReadinessPanelProps> = ({
                       </div>
                     </div>
 
-                    {/* Quick Substitute Selection */}
-                    <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-slate-400">Pilih Pengganti:</span>
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) handleSwapDriver(conf.scheduleId, e.target.value);
-                        }}
-                        defaultValue=""
-                        className="bg-slate-900 border border-rose-700/60 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 cursor-pointer max-w-[180px] truncate"
-                      >
-                        <option value="" disabled>Pilih Driver Pengganti...</option>
-                        {conf.recommendedSubstitutes.map(sub => (
-                          <option key={sub.id} value={sub.id}>
-                            {sub.name} (⭐ Rekomendasi)
-                          </option>
-                        ))}
-                        {readinessAnalysis.standbyDrivers.filter(d => !conf.recommendedSubstitutes.some(rs => rs.id === d.id)).map(sb => (
-                          <option key={sb.id} value={sb.id}>
-                            {sb.name} (Standby)
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* Quick Substitute Selection or Emergency Override */}
+                    {conf.conflictType === 'out_of_town_restricted' ? (
+                      <div className="pt-2 border-t border-slate-800">
+                        <button
+                          onClick={() => handleToggleEmergencyOverride(conf.scheduleId)}
+                          className="w-full py-1.5 px-3 rounded bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-bold text-xs shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Zap className="w-3.5 h-3.5" />
+                          <span>🚨 Aktifkan Override Darurat (Bypass Larangan)</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-slate-400">Pilih Pengganti:</span>
+                        <select
+                          onChange={(e) => {
+                            if (e.target.value) handleSwapDriver(conf.scheduleId, e.target.value);
+                          }}
+                          defaultValue=""
+                          className="bg-slate-900 border border-rose-700/60 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 cursor-pointer max-w-[180px] truncate"
+                        >
+                          <option value="" disabled>Pilih Driver Pengganti...</option>
+                          {conf.recommendedSubstitutes.map(sub => (
+                            <option key={sub.id} value={sub.id}>
+                              {sub.name} (⭐ Rekomendasi)
+                            </option>
+                          ))}
+                          {readinessAnalysis.standbyDrivers.filter(d => !conf.recommendedSubstitutes.some(rs => rs.id === d.id)).map(sb => (
+                            <option key={sb.id} value={sb.id}>
+                              {sb.name} (Standby)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

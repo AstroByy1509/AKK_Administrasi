@@ -44,6 +44,10 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
+    if ((mapContainerRef.current as any)._leaflet_id) {
+      delete (mapContainerRef.current as any)._leaflet_id;
+    }
+
     const initialCenter: [number, number] = centerCoords || [-3.5, 115.0]; // Centered on Indonesia archipelago
 
     const map = L.map(mapContainerRef.current, {
@@ -71,8 +75,16 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     return () => {
       clearTimeout(timer);
-      map.remove();
-      mapInstanceRef.current = null;
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.stop();
+          mapInstanceRef.current.off();
+          mapInstanceRef.current.remove();
+        } catch {
+          // ignore cleanup race conditions
+        }
+        mapInstanceRef.current = null;
+      }
     };
   }, []);
 
@@ -81,6 +93,10 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     const map = mapInstanceRef.current;
     const layerGroup = layerGroupRef.current;
     if (!map || !layerGroup) return;
+
+    try {
+      map.stop();
+    } catch {}
 
     layerGroup.clearLayers();
     const bounds: L.LatLngExpression[] = [];
@@ -350,11 +366,12 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     // Auto fit bounds or set view
     if (centerCoords) {
-      map.setView(centerCoords, zoomLevel, { animate: true });
+      map.setView(centerCoords, zoomLevel, { animate: false });
     } else if (bounds.length > 0) {
       map.fitBounds(L.latLngBounds(bounds), {
         padding: [40, 40],
-        maxZoom: 14
+        maxZoom: 14,
+        animate: false
       });
     }
   }, [stores, selectedStoreId, trackingPoints, stops, showWarehouse, highlightIsland, plannedPolyline, isFleetMode, selectedFleetName, centerCoords, zoomLevel]);

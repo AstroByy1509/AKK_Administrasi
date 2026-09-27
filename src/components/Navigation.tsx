@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Calendar, Truck, FileSpreadsheet, Map, Radio, Database, Shield, ChevronDown, Bell, LogOut, UserCircle, Menu, X, Building2, History } from 'lucide-react';
+import { LayoutDashboard, Calendar, Truck, FileSpreadsheet, Map, Radio, Database, Shield, ChevronDown, Bell, LogOut, UserCircle, Menu, X, Building2, History, Users } from 'lucide-react';
 import { UserRole, UserProfile } from '../types';
 import { logisticsStore } from '../services/store';
 import { AkkLogo } from './AkkLogo';

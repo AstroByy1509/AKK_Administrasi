@@ -612,13 +612,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     onClick={() => setIsPurchasingStockOpen(!isPurchasingStockOpen)}
                     className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-150 cursor-pointer ${
-                      currentTab === 'purchasing_stock'
+                      currentTab === 'purchasing_stock_overview' || currentTab === 'purchasing_stock_forecast'
                         ? 'bg-amber-500/10 text-amber-300 font-bold border border-amber-500/25'
                         : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border border-transparent'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <Layers className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${currentTab === 'purchasing_stock' ? 'text-amber-400' : 'text-slate-400'}`} />
+                      <Layers className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${currentTab === 'purchasing_stock_overview' || currentTab === 'purchasing_stock_forecast' ? 'text-amber-400' : 'text-slate-400'}`} />
                       <span className="truncate">Analisa Stok</span>
                     </div>
                     {isPurchasingStockOpen ? (

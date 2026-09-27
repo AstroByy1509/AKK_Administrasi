@@ -157,7 +157,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '2477 CC',
     lastMaintenance: '2026-12-23',
     taxDueDate: '2027-06-25',
-    stnkExpiryDate: '2029-06-25'
+    stnkExpiryDate: '2029-06-25',
+    kirExpiryDate: '2026-10-18'
   },
   {
     id: 'flt-02',
@@ -175,7 +176,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '2499 CC',
     lastMaintenance: '2027-02-05',
     taxDueDate: '2027-08-03',
-    stnkExpiryDate: '2031-08-03'
+    stnkExpiryDate: '2031-08-03',
+    kirExpiryDate: '2027-01-20'
   },
   {
     id: 'flt-03',
@@ -193,7 +195,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '3908 CC',
     lastMaintenance: '2027-01-29',
     taxDueDate: '2027-08-03',
-    stnkExpiryDate: '2027-08-03'
+    stnkExpiryDate: '2027-08-03',
+    kirExpiryDate: '2026-10-05'
   },
   {
     id: 'flt-04',
@@ -211,7 +214,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '3298 CC',
     lastMaintenance: '2026-11-27',
     taxDueDate: '2027-05-17',
-    stnkExpiryDate: '2029-05-27'
+    stnkExpiryDate: '2029-05-27',
+    kirExpiryDate: '2026-11-28'
   },
   {
     id: 'flt-05',
@@ -229,7 +233,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '3908 CC',
     lastMaintenance: '2026-08-11',
     taxDueDate: '2026-10-07',
-    stnkExpiryDate: '2026-10-07'
+    stnkExpiryDate: '2026-10-07',
+    kirExpiryDate: '2026-10-12'
   },
   {
     id: 'flt-06',
@@ -247,7 +252,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4009 CC',
     lastMaintenance: '2026-12-01',
     taxDueDate: '2027-01-16',
-    stnkExpiryDate: '2030-01-16'
+    stnkExpiryDate: '2030-01-16',
+    kirExpiryDate: '2026-09-20'
   },
   {
     id: 'flt-07',
@@ -265,7 +271,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4009 CC',
     lastMaintenance: '2027-02-20',
     taxDueDate: '2027-02-18',
-    stnkExpiryDate: '2027-02-18'
+    stnkExpiryDate: '2027-02-18',
+    kirExpiryDate: '2026-10-22'
   },
   {
     id: 'flt-08',
@@ -283,7 +290,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4009 CC',
     lastMaintenance: '2026-11-24',
     taxDueDate: '2027-07-04',
-    stnkExpiryDate: '2028-07-04'
+    stnkExpiryDate: '2028-07-04',
+    kirExpiryDate: '2027-02-15'
   },
   {
     id: 'flt-09',
@@ -301,7 +309,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4009 CC',
     lastMaintenance: '2026-10-23',
     taxDueDate: '2026-11-11',
-    stnkExpiryDate: '2030-11-11'
+    stnkExpiryDate: '2030-11-11',
+    kirExpiryDate: '2026-10-10'
   },
   {
     id: 'flt-10',
@@ -319,7 +328,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4009 CC',
     lastMaintenance: '2026-12-23',
     taxDueDate: '2027-05-17',
-    stnkExpiryDate: '2028-05-17'
+    stnkExpiryDate: '2028-05-17',
+    kirExpiryDate: '2026-12-14'
   },
   {
     id: 'flt-11',
@@ -337,7 +347,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4778 CC',
     lastMaintenance: '2026-12-02',
     taxDueDate: '2027-05-20',
-    stnkExpiryDate: '2029-05-20'
+    stnkExpiryDate: '2029-05-20',
+    kirExpiryDate: '2027-03-10'
   },
   {
     id: 'flt-12',
@@ -355,7 +366,8 @@ export const INITIAL_FLEETS: Fleet[] = [
     engineCc: '4778 CC',
     lastMaintenance: '2026-11-19',
     taxDueDate: '2026-10-06',
-    stnkExpiryDate: '2027-10-06'
+    stnkExpiryDate: '2027-10-06',
+    kirExpiryDate: '2026-10-08'
   }
 ];
 

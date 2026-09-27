@@ -28,10 +28,15 @@ import {
   Eye,
   Users,
   ChevronRight,
-  Wrench
+  Wrench,
+  Bell,
+  ShieldAlert,
+  Zap
 } from 'lucide-react';
 import { FleetPerformanceInsight } from './FleetPerformanceInsight';
 import { FleetTaxMonitoringPanel } from './FleetTaxMonitoringPanel';
+import { DeliveryHeatmap } from './DeliveryHeatmap';
+import { RouteSlaDeviationSummary } from './RouteSlaDeviationSummary';
 import { Schedule, Fleet, RetailStore, Crew, TracksolidDevice } from '../types';
 import { logisticsStore } from '../services/store';
 import { NavTab } from './Sidebar';
@@ -95,6 +100,70 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
+  // Real-time SLA Tolerance Alert State & Cache Ref to prevent toast spamming
+  const warnedSlaRef = React.useRef<Set<string>>(new Set());
+  const [slaAlertLastTriggered, setSlaAlertLastTriggered] = useState<string | null>(null);
+
+  // Helper function to calculate SLA progression and tolerance
+  const getScheduleSlaMetric = (sch: Schedule) => {
+    const now = new Date().getTime();
+    const departure = sch.departureDate ? new Date(sch.departureDate).getTime() : now - 4 * 3600000;
+    const estimated = sch.estimatedArrival ? new Date(sch.estimatedArrival).getTime() : departure + 10 * 3600000;
+    const totalSlaMs = Math.max(3600000, estimated - departure);
+    const totalSlaHours = Number((totalSlaMs / (1000 * 3600)).toFixed(1));
+
+    let elapsedMs = Math.max(0, now - departure);
+
+    // Realistic elapsed simulation for mock/preset schedules in transit:
+    if (departure < now - 24 * 3600000) {
+      const seedRatios: Record<string, number> = {
+        'sch-01': 0.88, // 88% - Mendekati batas toleransi SLA (Sisa 1.8 jam)
+        'sch-02': 0.84, // 84% - Mendekati batas toleransi SLA
+        'sch-03': 0.65, // 65% - On-track
+        'sch-04': 0.15  // 15% - Scheduled
+      };
+      const ratio = seedRatios[sch.id] ?? (sch.status === 'in_transit' ? 0.82 : 0.4);
+      elapsedMs = totalSlaMs * ratio;
+    }
+
+    const elapsedHours = Number((elapsedMs / (1000 * 3600)).toFixed(1));
+    const remainingMs = Math.max(0, totalSlaMs - elapsedMs);
+    const remainingMinutes = Math.round(remainingMs / (1000 * 60));
+    const remainingHours = Number((remainingMinutes / 60).toFixed(1));
+    const progressPercent = Math.min(100, Math.round((elapsedMs / totalSlaMs) * 100));
+
+    // Ambang batas toleransi SLA: jika waktu tempuh >= 80% dari target SLA atau sisa toleransi <= 90 menit
+    const isNearToleranceLimit = sch.status === 'in_transit' && (progressPercent >= 80 || remainingMinutes <= 90);
+    const isExceeded = sch.status === 'in_transit' && progressPercent >= 100;
+
+    return {
+      totalSlaHours,
+      elapsedHours,
+      remainingMinutes,
+      remainingHours,
+      progressPercent,
+      isNearToleranceLimit,
+      isExceeded
+    };
+  };
+
+  const triggerSlaToleranceAlert = (sch: Schedule, manual = false) => {
+    const metrics = getScheduleSlaMetric(sch);
+    const plate = sch.fleet?.plateNumber || sch.fleetId || 'Armada';
+    const initialCode = sch.fleet?.initialCode ? `[${sch.fleet.initialCode}] ` : '';
+    const driver = sch.crew?.name || 'Driver';
+    const dest = sch.store?.storeName || 'Outlet Tujuan';
+
+    logisticsStore.emitNotification(
+      'sla_warning',
+      `⚠️ Peringatan Toleransi SLA: ${initialCode}${plate}`,
+      `Waktu tempuh armada ${initialCode}${plate} (${driver}) rute ke ${dest} telah mencapai ${metrics.progressPercent}% dari target SLA (${metrics.elapsedHours} jam / ${metrics.totalSlaHours} jam). Sisa toleransi waktu tiba tinggal ${metrics.remainingMinutes} menit sebelum melewati batas perjanjian layanan (SLA)!`,
+      true
+    );
+
+    setSlaAlertLastTriggered(new Date().toLocaleTimeString('id-ID'));
+  };
+
   useEffect(() => {
     const checkCriticalSchedules = () => {
       const schedules = logisticsStore.getSchedules();
@@ -119,61 +188,90 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
       }
     };
 
-      const checkGeofencing = () => {
-        const devices = logisticsStore.getDevices();
-        const schedules = logisticsStore.getSchedules();
-        const stores = logisticsStore.getStores();
+    const checkGeofencing = () => {
+      const devices = logisticsStore.getDevices();
+      const schedules = logisticsStore.getSchedules();
+      const stores = logisticsStore.getStores();
 
-        const RADIUS_KM = 5; // 5 km radius
+      const RADIUS_KM = 5; // 5 km radius
 
-        schedules.forEach(schedule => {
-          if (schedule.status === 'in_transit' && schedule.storeId) {
-            const store = stores.find(s => s.id === schedule.storeId);
-            const device = devices.find(d => d.vehiclePlate === schedule.fleet?.plateNumber);
+      schedules.forEach(schedule => {
+        if (schedule.status === 'in_transit' && schedule.storeId) {
+          const store = stores.find(s => s.id === schedule.storeId);
+          const device = devices.find(d => d.vehiclePlate === schedule.fleet?.plateNumber);
 
-            if (store && device) {
-              const distance = calculateDistance(
-                device.latitude,
-                device.longitude,
-                store.latitude,
-                store.longitude
+          if (store && device) {
+            const distance = calculateDistance(
+              device.latitude,
+              device.longitude,
+              store.latitude,
+              store.longitude
+            );
+
+            if (distance > RADIUS_KM) {
+              logisticsStore.emitNotification(
+                'geofence',
+                '📍 Peringatan Geofencing',
+                `Armada ${device.vehiclePlate} (${schedule.fleet?.plateNumber}) keluar dari radius area distribusi (${distance.toFixed(1)} km dari tujuan).`,
+                true
               );
-
-              if (distance > RADIUS_KM) {
-                logisticsStore.emitNotification(
-                  'geofence',
-                  '📍 Peringatan Geofencing',
-                  `Armada ${device.vehiclePlate} (${schedule.fleet?.plateNumber}) keluar dari radius area distribusi (${distance.toFixed(1)} km dari tujuan).`,
-                  true
-                );
-              }
             }
           }
-        });
-      };
-
-      const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-        const R = 6371; // Earth radius in km
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-      };
-
-      return logisticsStore.subscribe(() => {
-        setSchedules(logisticsStore.getSchedules());
-        setFleets(logisticsStore.getFleets());
-        setStores(logisticsStore.getStores());
-        setCrews(logisticsStore.getCrews());
-        setDevices(logisticsStore.getDevices());
-        
-        checkCriticalSchedules();
-        checkGeofencing();
+        }
       });
-    }, []);
+    };
+
+    const checkSlaToleranceAlerts = () => {
+      const allSchedules = logisticsStore.getSchedules();
+      const inTransitSchedules = allSchedules.filter(s => s.status === 'in_transit');
+
+      inTransitSchedules.forEach(sch => {
+        const metrics = getScheduleSlaMetric(sch);
+        if (metrics.isNearToleranceLimit && !warnedSlaRef.current.has(sch.id)) {
+          warnedSlaRef.current.add(sch.id);
+          triggerSlaToleranceAlert(sch);
+        }
+      });
+    };
+
+    const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+      const R = 6371; // Earth radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    // Initial check on load
+    checkCriticalSchedules();
+    checkGeofencing();
+    checkSlaToleranceAlerts();
+
+    // Periodic check every 30 seconds for live SLA tolerance monitoring
+    const slaTimer = setInterval(() => {
+      checkSlaToleranceAlerts();
+    }, 30000);
+
+    const unsubscribe = logisticsStore.subscribe(() => {
+      setSchedules(logisticsStore.getSchedules());
+      setFleets(logisticsStore.getFleets());
+      setStores(logisticsStore.getStores());
+      setCrews(logisticsStore.getCrews());
+      setDevices(logisticsStore.getDevices());
+      
+      checkCriticalSchedules();
+      checkGeofencing();
+      checkSlaToleranceAlerts();
+    });
+
+    return () => {
+      clearInterval(slaTimer);
+      unsubscribe();
+    };
+  }, []);
 
   // Save filters to localStorage for persistence across tab navigation
   const handleMonthChange = (month: string) => {
@@ -272,6 +370,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   const activeDeliveries = useMemo(() => {
     return filteredSchedules.filter(s => s.status === 'in_transit');
   }, [filteredSchedules]);
+
+  const overriddenSchedules = useMemo(() => {
+    return schedules.filter(s => s.isUrgentOverride || (s.notes && (s.notes.toLowerCase().includes('override') || s.notes.toLowerCase().includes('darurat'))));
+  }, [schedules]);
 
   const scheduledDeliveries = useMemo(() => {
     return filteredSchedules.filter(s => s.status === 'scheduled');
@@ -496,6 +598,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
             >
               <Plus className="w-4 h-4" />
               <span>Jadwalkan Pengiriman</span>
+            </button>
+            <button
+              onClick={() => onNavigate('customer_map')}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold border border-emerald-500/40 shadow-sm transition cursor-pointer"
+              title="Sinkronkan data toko retail dari sheet Google Sheets DATA FIX"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
+              <span>Google Sheets (DATA FIX)</span>
             </button>
             <button
               onClick={() => onNavigate('tracking_eval')}
@@ -1068,14 +1178,88 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                   : 'Tidak ada pengiriman tercatat untuk kombinasi periode dan armada ini'}
               </p>
             </div>
-            <button
-              onClick={() => onNavigate('schedules')}
-              className="text-xs text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 shrink-0"
-            >
-              <span>Buka Modul Penjadwalan</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const inTransit = filteredSchedules.find(s => s.status === 'in_transit') || filteredSchedules[0];
+                  if (inTransit) {
+                    triggerSlaToleranceAlert(inTransit, true);
+                  }
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 font-semibold flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                title="Picu toast notifikasi SLA real-time secara instan"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Tes Notifikasi SLA</span>
+              </button>
+              <button
+                onClick={() => onNavigate('schedules')}
+                className="text-xs text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 shrink-0"
+              >
+                <span>Buka Modul Penjadwalan</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
+
+          {/* Visualisasi Heatmap Konsentrasi Area Pengiriman */}
+          <DeliveryHeatmap />
+
+          {/* Ringkasan Deviasi Durasi SLA per Rute Distribusi */}
+          <RouteSlaDeviationSummary schedules={schedules} stores={stores} onNavigate={onNavigate} />
+
+          {/* Banner Peringatan Dini Toleransi SLA Armada */}
+          {filteredSchedules.some(s => s.status === 'in_transit' && getScheduleSlaMetric(s).isNearToleranceLimit) && (
+            <div className="bg-gradient-to-r from-amber-950/40 via-slate-900 to-rose-950/30 border border-amber-500/40 rounded-2xl p-4 shadow-lg space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl mt-0.5 animate-pulse shrink-0">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-400">
+                        Sistem Peringatan Dini Toleransi SLA (Real-Time Alert Engine)
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+                        Mendekati Batas SLA
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Waktu tempuh armada pengiriman aktif telah melewati batas toleransi 80% dari target SLA. Sistem otomatis menembakkan notifikasi peringatan (toast) agar dispatcher dapat mengantisipasi potensi keterlambatan.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                  <button
+                    onClick={() => {
+                      const target = filteredSchedules.find(s => s.status === 'in_transit' && getScheduleSlaMetric(s).isNearToleranceLimit) || filteredSchedules[0];
+                      if (target) {
+                        triggerSlaToleranceAlert(target, true);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                    title="Picu toast notification peringatan SLA secara instan"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    <span>Picu Toast SLA</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      warnedSlaRef.current.clear();
+                      const targets = filteredSchedules.filter(s => s.status === 'in_transit' && getScheduleSlaMetric(s).isNearToleranceLimit);
+                      targets.forEach(t => triggerSlaToleranceAlert(t, true));
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition cursor-pointer"
+                    title="Kirim ulang peringatan SLA ke semua armada yang berisiko"
+                  >
+                    <span>Kirim Ulang Semua</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             {filteredSchedules.length > 0 ? (
@@ -1085,44 +1269,90 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                     <th className="p-3 font-semibold">Resi / Toko Tujuan</th>
                     <th className="p-3 font-semibold">Armada &amp; Driver</th>
                     <th className="p-3 font-semibold">Rute &amp; Transit</th>
-                    <th className="p-3 font-semibold">Jadwal &amp; ETA</th>
-                    <th className="p-3 font-semibold">Status</th>
+                    <th className="p-3 font-semibold">Waktu Tempuh &amp; SLA</th>
+                    <th className="p-3 font-semibold">Status Toleransi SLA</th>
+                    <th className="p-3 font-semibold text-center">Aksi Notifikasi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {filteredSchedules.slice(0, 6).map(sch => (
-                    <tr key={sch.id} className="hover:bg-slate-800/40 transition">
-                      <td className="p-3">
-                        <div className="font-mono font-bold text-white text-xs">{sch.trackingNumber}</div>
-                        <div className="text-slate-400 text-[11px] truncate max-w-[180px]">{sch.store?.storeName}</div>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-mono font-bold text-slate-200">{sch.fleet?.plateNumber}</div>
-                        <div className="text-slate-400 text-[11px]">{sch.crew?.name}</div>
-                      </td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          sch.isInterIsland ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'
-                        }`}>
-                          {sch.isInterIsland ? 'Luar Pulau (Ferry)' : 'Tol Darat (Jawa)'}
-                        </span>
-                      </td>
-                      <td className="p-3 font-mono text-amber-400 text-[11px]">
-                        {new Date(sch.estimatedArrival).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          sch.status === 'in_transit'
-                            ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                            : sch.status === 'delivered'
-                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                            : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                        }`}>
-                          {sch.status === 'in_transit' ? 'In Transit' : sch.status === 'delivered' ? 'Selesai' : 'Terjadwal'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredSchedules.slice(0, 6).map(sch => {
+                    const slaMetric = getScheduleSlaMetric(sch);
+
+                    return (
+                      <tr key={sch.id} className="hover:bg-slate-800/40 transition">
+                        <td className="p-3">
+                          <div className="font-mono font-bold text-white text-xs">{sch.trackingNumber}</div>
+                          <div className="text-slate-400 text-[11px] truncate max-w-[180px]">{sch.store?.storeName}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-mono font-bold text-slate-200">{sch.fleet?.plateNumber}</div>
+                          <div className="text-slate-400 text-[11px]">{sch.crew?.name}</div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            sch.isInterIsland ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'
+                          }`}>
+                            {sch.isInterIsland ? 'Luar Pulau (Ferry)' : 'Tol Darat (Jawa)'}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                            <span className="text-slate-300">{slaMetric.elapsedHours}j / {slaMetric.totalSlaHours}j</span>
+                            <span className={`font-bold ${slaMetric.isNearToleranceLimit ? 'text-amber-400' : 'text-slate-400'}`}>
+                              {slaMetric.progressPercent}% SLA
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                slaMetric.isNearToleranceLimit
+                                  ? 'bg-gradient-to-r from-amber-500 to-rose-500 animate-pulse'
+                                  : 'bg-blue-500'
+                              }`}
+                              style={{ width: `${slaMetric.progressPercent}%` }}
+                            />
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-1">
+                            ETA: {new Date(sch.estimatedArrival).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {sch.status === 'in_transit' ? (
+                            slaMetric.isNearToleranceLimit ? (
+                              <span className="px-2 py-1 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 inline-flex items-center gap-1 animate-pulse">
+                                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                <span>Mendekati Batas SLA (Sisa {slaMetric.remainingMinutes} mnt)</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-blue-400" />
+                                <span>On-Track SLA (Sisa {slaMetric.remainingHours}j)</span>
+                              </span>
+                            )
+                          ) : sch.status === 'delivered' ? (
+                            <span className="px-2 py-1 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>Selesai (Tepat Waktu)</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                              Terjadwal
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => triggerSlaToleranceAlert(sch, true)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-amber-500/20 hover:text-amber-300 border border-slate-700 hover:border-amber-500/40 text-slate-300 text-[11px] font-semibold transition cursor-pointer inline-flex items-center gap-1 active:scale-95 shadow-xs"
+                            title="Kirim Toast Notifikasi Peringatan SLA Armada Ini"
+                          >
+                            <Bell className="w-3 h-3 text-amber-400" />
+                            <span>Picu Alert</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
@@ -1223,6 +1453,80 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
             <FleetTaxMonitoringPanel />
           </div>
         </div>
+      </div>
+
+      {/* Panel Histori Penugasan Override oleh Admin */}
+      <div className="bg-slate-900 border border-rose-500/30 rounded-xl p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/30">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>Histori Penugasan Override (Bypass Aturan) oleh Admin</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                  {overriddenSchedules.length} Kasus
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Catatan audit operasional untuk penugasan yang melewati batas aturan baku (seperti supir lokal ke luar kota atau pasangan blacklist) dengan persetujuan darurat admin.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {overriddenSchedules.length === 0 ? (
+          <div className="py-6 text-center text-slate-500 text-xs bg-slate-950/40 rounded-lg border border-dashed border-slate-800">
+            Belum ada histori penugasan yang di-override oleh admin. Semua pengiriman mematuhi standar aturan operasional reguler.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th className="p-3 font-semibold">Resi & Tujuan</th>
+                  <th className="p-3 font-semibold">Armada</th>
+                  <th className="p-3 font-semibold">Driver & Helper</th>
+                  <th className="p-3 font-semibold">Admin / Operator</th>
+                  <th className="p-3 font-semibold">Waktu / Tanggal</th>
+                  <th className="p-3 font-semibold">Alasan / Catatan Override</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 text-slate-300">
+                {overriddenSchedules.map((sch) => (
+                  <tr key={sch.id} className="hover:bg-slate-800/50 transition">
+                    <td className="p-3">
+                      <div className="font-mono font-bold text-white">{sch.trackingNumber}</div>
+                      <div className="text-[11px] text-slate-400">{sch.store?.storeName || sch.storeId}</div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-semibold text-white">{sch.fleet?.plateNumber || sch.fleetId}</div>
+                      <div className="text-[11px] text-slate-400">{sch.fleet?.vehicleType || 'Truck Unit'}</div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-medium text-white">{sch.crew?.name || 'Supir Ditugaskan'}</div>
+                      <div className="text-[11px] text-slate-400">{sch.crewHelper?.name || 'Tanpa Helper'}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                        Super Admin / Dispatcher
+                      </span>
+                    </td>
+                    <td className="p-3 font-mono text-[11px] text-slate-400">
+                      {new Date(sch.departureDate).toLocaleDateString()} {new Date(sch.departureDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="p-3">
+                      <div className="text-rose-300 font-medium max-w-xs leading-relaxed">
+                        {sch.notes || 'Override Darurat: Bypass aturan larangan luar kota / pasangan terlarang disetujui oleh manajemen.'}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
