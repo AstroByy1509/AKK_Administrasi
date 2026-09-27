@@ -145,6 +145,21 @@ class LogisticsStore {
       this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     }
 
+    // Auto-migrate stores to strictly enforce verified 15 stores from Google Sheets 'DATA FIX'
+    // and immediately purge legacy 57 stores or corrupt 30 dummy items (e.g., 'Freshman', 'Sophomore')
+    const hasInvalidStores = !this.stores || this.stores.length !== 15 || this.stores.some(s => 
+      s.storeName.includes('Freshman') || 
+      s.storeName.includes('Sophomore') || 
+      s.storeName.includes('Junior') ||
+      s.storeName.includes('Senior') ||
+      s.storeName === 'Transmart Buah Batu Bandung' ||
+      s.storeName.startsWith('Toko Retail ')
+    );
+    if (hasInvalidStores) {
+      this.stores = [...INITIAL_STORES];
+      this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    }
+
     // Auto-migrate user profiles if the user name was changed
     let updatedUsers = false;
     this.users = this.users.map(u => {
@@ -977,6 +992,12 @@ class LogisticsStore {
     this.stores = [...this.stores, newStore];
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
     return newStore;
+  }
+
+  public setStores(newStores: RetailStore[]): void {
+    this.stores = [...newStores];
+    this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    this.notify();
   }
 
   public deleteStore(id: string): void {

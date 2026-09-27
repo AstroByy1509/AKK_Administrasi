@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
 import { GoogleSheetsStoreSyncModal } from './GoogleSheetsStoreSyncModal';
 import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
+import { CENTRAL_WAREHOUSE } from '../data/mockData';
 
 interface CustomerMappingProps {
   onScheduleForStore?: (store: RetailStore) => void;
@@ -24,6 +25,15 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const [isGoogleSheetsSyncOpen, setIsGoogleSheetsSyncOpen] = useState(false);
 
   useEffect(() => {
+    // Auto-sync immediately if store count is not 15 or corrupted dummy stores (e.g., 'Freshman') are detected
+    const current = logisticsStore.getStores();
+    if (
+      current.length !== 15 || 
+      current.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore') || s.storeName.startsWith('Toko Retail '))
+    ) {
+      googleSheetsSyncService.syncNow('Pemuatan Otomatis Modul Pelanggan');
+    }
+
     const unsubStore = logisticsStore.subscribe(() => {
       setStores(logisticsStore.getStores());
     });
@@ -62,8 +72,11 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     return routesForWeek.map((route: any) => {
       const store = stores.find(s => s.storeName === route.route) || stores.find(s => route.route.includes(s.storeName));
       if (store) {
+        const sLat = Number(store.latitude);
+        const sLng = Number(store.longitude);
+        if (isNaN(sLat) || isNaN(sLng) || !isFinite(sLat) || !isFinite(sLng)) return null;
         return {
-          coords: [[-8.2333, 114.3667], [store.latitude, store.longitude]] as [number, number][],
+          coords: [[-8.2333, 114.3667], [sLat, sLng]] as [number, number][],
           color: route.day === 'Senin' ? '#ef4444' : route.day === 'Selasa' ? '#f59e0b' : route.day === 'Rabu' ? '#10b981' : route.day === 'Kamis' ? '#3b82f6' : route.day === 'Jumat' ? '#8b5cf6' : '#ec4899'
         };
       }
@@ -87,21 +100,40 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     storeCategory: 'Supermarket' as RetailStore['storeCategory']
   });
 
-  useEffect(() => {
-    return logisticsStore.subscribe(() => {
-      setStores(logisticsStore.getStores());
+  const filteredStores = useMemo(() => {
+    return stores.filter(st => {
+      const matchesIsland = selectedIsland === 'all' || st.island === selectedIsland;
+      const matchesCategory = selectedCategory === 'all' || st.storeCategory === selectedCategory;
+      const matchesSearch =
+        st.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        st.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        st.storeCode.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesIsland && matchesCategory && matchesSearch;
     });
-  }, []);
+  }, [stores, selectedIsland, selectedCategory, searchQuery]);
 
-  const filteredStores = stores.filter(st => {
-    const matchesIsland = selectedIsland === 'all' || st.island === selectedIsland;
-    const matchesCategory = selectedCategory === 'all' || st.storeCategory === selectedCategory;
-    const matchesSearch =
-      st.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      st.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      st.storeCode.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesIsland && matchesCategory && matchesSearch;
-  });
+  // Comprehensive Delivery Loop Polyline connecting ALL 15 stores
+  const plannedPolylineCoords = useMemo(() => {
+    if (!showRoutes || filteredStores.length === 0) return [];
+
+    // Sort stores logically for an optimal, realistic distribution delivery route:
+    // 1. From Central Warehouse DC (Kalipuro)
+    // 2. North/Kalipuro stores (e.g., Hotel Ketapang Indah)
+    // 3. Banyuwangi Kota stores (Abba Mart, Kurnia Sobo, RSI Fatimah)
+    // 4. Down to the Genteng cluster stores (Asmuin, Damai, Santoso, Kawi, Holly, Lima Sepuluh, Usaha Jaya 1 & 2, Bu Tiwi, Melati, Bu Yuli)
+    // 5. Returning back to Central Warehouse
+    const sortedStores = [...filteredStores].sort((a, b) => {
+      const latA = Number(a.latitude) || 0;
+      const latB = Number(b.latitude) || 0;
+      return latB - latA; // North to South
+    });
+
+    return [
+      CENTRAL_WAREHOUSE.coordinates,
+      ...sortedStores.map(s => [Number(s.latitude), Number(s.longitude)] as [number, number]),
+      CENTRAL_WAREHOUSE.coordinates
+    ];
+  }, [showRoutes, filteredStores]);
 
   const handleSaveStore = (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,6 +179,15 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+            <button
+              onClick={() => googleSheetsSyncService.syncNow('Picu Cepat Toolbar')}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md transition cursor-pointer border border-emerald-500/40"
+              title="Perbarui & sinkronkan ulang langsung 15 toko dari sheet 'DATA FIX'"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Sinkronkan 15 Toko</span>
+            </button>
+
             <button
               onClick={() => setIsGoogleSheetsSyncOpen(true)}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-800/90 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition cursor-pointer border border-emerald-500/50"
@@ -220,13 +261,19 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 onChange={(e) => setSelectedWeek(Number(e.target.value))}
                 className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
               >
-                {[1, 2, 3, 4].map(w => <option key={w} value={w}>Pekan {w}</option>)}
+                <option value={1}>Pekan 1 (Jalur Utama 15 Toko)</option>
+                <option value={2}>Pekan 2 (Jalur Klaster Genteng)</option>
+                <option value={3}>Pekan 3 (Jalur Banyuwangi & Kalipuro)</option>
+                <option value={4}>Pekan 4 (Jalur Konsolidasi Bulanan)</option>
               </select>
               <button 
+                type="button"
                 onClick={() => setShowRoutes(!showRoutes)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${showRoutes ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400'} border border-slate-800`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${showRoutes ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 text-slate-400'} border border-slate-800 transition cursor-pointer flex items-center gap-1.5`}
+                title="Tampilkan garis titik-titik rute pengiriman ke seluruh 15 toko"
               >
-                {showRoutes ? 'Sembunyikan Rute' : 'Tampilkan Rute'}
+                <Route className="w-3.5 h-3.5" />
+                <span>{showRoutes ? 'Sembunyikan Rute (15 Toko)' : 'Tampilkan Rute (15 Toko)'}</span>
               </button>
               <select
                 value={selectedIsland}
@@ -255,8 +302,11 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
           </div>
 
           {/* Interactive Leaflet Map */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-2 px-1">
+          <div
+            id="customer-mapping-container"
+            className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col w-full h-[620px] min-h-[500px]"
+          >
+            <div className="flex items-center justify-between text-xs text-slate-400 mb-2 px-1 shrink-0">
               <div className="flex items-center gap-3">
                 <span className="flex items-center gap-1">
                   <span className="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
@@ -276,16 +326,16 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
               </span>
             </div>
 
-            <div className="relative z-0">
+            <div className="relative z-0 flex-1 w-full min-h-0 flex flex-col">
               <LeafletMap
                 stores={filteredStores}
                 selectedStoreId={selectedStore?.id}
                 onSelectStore={(st) => setSelectedStore(st)}
                 onSchedule={onScheduleForStore}
                 highlightIsland={selectedIsland}
-                heightClass="h-[520px]"
+                heightClass="h-full w-full flex-1 min-h-0"
                 showWarehouse={true}
-                plannedPolyline={routePolylines.map((p: any) => p.coords[1])}
+                plannedPolyline={plannedPolylineCoords}
               />
             </div>
           </div>

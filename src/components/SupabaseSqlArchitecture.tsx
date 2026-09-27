@@ -1,12 +1,261 @@
-import React, { useState } from 'react';
-import { Database, Copy, Check, Server, ShieldCheck, Key, Globe, ExternalLink, Terminal, Code2, Layers } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Database, 
+  Copy, 
+  Check, 
+  Server, 
+  ShieldCheck, 
+  Key, 
+  Globe, 
+  ExternalLink, 
+  Terminal, 
+  Code2, 
+  Layers, 
+  AlertCircle, 
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  FileSpreadsheet,
+  ArrowRightLeft,
+  Sparkles,
+  Filter,
+  Search,
+  Zap,
+  MapPin,
+  ExternalLink as LinkIcon
+} from 'lucide-react';
 import { logisticsStore } from '../services/store';
+import { googleSheetsSyncService, validateCoordinateData } from '../services/googleSheetsSyncService';
+import { DATA_FIX_SHEET_PRESETS, sanitizeCoordinate } from './GoogleSheetsStoreSyncModal';
+import { RetailStore } from '../types';
+import { useToast } from '../context/ToastContext';
+import { LiveSyncHealthCard } from './LiveSyncHealthCard';
+
+export interface StoreDiffItem {
+  id: string; // key
+  sourceNo?: number;
+  sheetStoreCode: string;
+  sheetStoreName: string;
+  sheetLat: number;
+  sheetLng: number;
+  sheetCategory: string;
+  sheetAddress: string;
+  sheetPhone: string;
+  localId?: string; // local store UUID
+  localStoreCode?: string;
+  localStoreName?: string;
+  localLat?: number;
+  localLng?: number;
+  localCategory?: string;
+  localAddress?: string;
+  localPhone?: string;
+  status: 'SYNCED' | 'MISSING_IN_LOCAL' | 'MISMATCH' | 'EXTRA_IN_LOCAL';
+  issues: string[];
+}
 
 export const SupabaseSqlArchitecture: React.FC = () => {
+  const { addNotification } = useToast();
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
+  const [isFixingSync, setIsFixingSync] = useState(false);
+  const [diffFilter, setDiffFilter] = useState<'all' | 'issues' | 'synced'>('all');
+  const [diffSearch, setDiffSearch] = useState('');
+
+  // Reactive state from local stores & gsheets sync service
+  const [localStores, setLocalStores] = useState<RetailStore[]>(logisticsStore.getStores());
+  const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
+  const [syncLogs, setSyncLogs] = useState(googleSheetsSyncService.getSyncLogs());
+
+  useEffect(() => {
+    const unsubStore = logisticsStore.subscribe(() => {
+      setLocalStores(logisticsStore.getStores());
+    });
+    const unsubGsheets = googleSheetsSyncService.subscribe(() => {
+      setSyncConfig(googleSheetsSyncService.getConfig());
+      setSyncLogs(googleSheetsSyncService.getSyncLogs());
+      setLocalStores(logisticsStore.getStores());
+    });
+    return () => {
+      unsubStore();
+      unsubGsheets();
+    };
+  }, []);
+
+  // Compute real-time diff between Google Sheets 'DATA FIX' and Local Registry
+  const diffResults = useMemo(() => {
+    const items: StoreDiffItem[] = [];
+    const matchedLocalIds = new Set<string>();
+
+    // 1. Evaluate all records in source Google Sheet 'DATA FIX'
+    DATA_FIX_SHEET_PRESETS.forEach((sheetStore) => {
+      const cleanLat = sanitizeCoordinate(sheetStore.rawLat, false);
+      const cleanLng = sanitizeCoordinate(sheetStore.rawLng, true);
+
+      // Find matching store in local registry by storeCode OR storeName
+      const local = localStores.find(
+        (ls) =>
+          ls.storeCode.trim().toUpperCase() === sheetStore.storeCode.trim().toUpperCase() ||
+          ls.storeName.trim().toUpperCase() === sheetStore.storeName.trim().toUpperCase()
+      );
+
+      const issues: string[] = [];
+
+      // Check coordinate integrity in Google Sheets source
+      const coordValidation = validateCoordinateData(sheetStore.rawLat, sheetStore.rawLng);
+      if (!coordValidation.isValid) {
+        issues.push(`⚠️ Data Koordinat Cacat di Sheet: ${coordValidation.reason}`);
+      }
+
+      if (!local) {
+        items.push({
+          id: `diff-missing-${sheetStore.storeCode}`,
+          sourceNo: sheetStore.no,
+          sheetStoreCode: sheetStore.storeCode,
+          sheetStoreName: sheetStore.storeName,
+          sheetLat: cleanLat,
+          sheetLng: cleanLng,
+          sheetCategory: sheetStore.storeCategory,
+          sheetAddress: sheetStore.address,
+          sheetPhone: sheetStore.phone,
+          status: 'MISSING_IN_LOCAL',
+          issues: ['Outlet terdaftar di Google Sheet "DATA FIX" tetapi BELUM tersimpan di database lokal.']
+        });
+      } else {
+        matchedLocalIds.add(local.id);
+
+        // Check coordinate precision
+        const latDiff = Math.abs(local.latitude - cleanLat);
+        const lngDiff = Math.abs(local.longitude - cleanLng);
+        if (latDiff > 0.0005 || lngDiff > 0.0005) {
+          issues.push(
+            `Ketidaksesuaian Koordinat GPS: Sheet [${cleanLat.toFixed(5)}, ${cleanLng.toFixed(5)}] vs Local [${local.latitude.toFixed(5)}, ${local.longitude.toFixed(5)}] (selisih ${(latDiff + lngDiff).toFixed(4)}°)`
+          );
+        }
+
+        // Check category or warning flags
+        if (local.storeCategory === 'Needs Correction') {
+          issues.push('Kategori lokal bertanda "Needs Correction" karena kesalahan format koordinat awal.');
+        }
+
+        // Check store code
+        if (local.storeCode.trim().toUpperCase() !== sheetStore.storeCode.trim().toUpperCase()) {
+          issues.push(`Perbedaan Kode Outlet: Sheet "${sheetStore.storeCode}" vs Local "${local.storeCode}"`);
+        }
+
+        const status: StoreDiffItem['status'] = issues.length > 0 ? 'MISMATCH' : 'SYNCED';
+
+        items.push({
+          id: `diff-${sheetStore.storeCode}`,
+          sourceNo: sheetStore.no,
+          sheetStoreCode: sheetStore.storeCode,
+          sheetStoreName: sheetStore.storeName,
+          sheetLat: cleanLat,
+          sheetLng: cleanLng,
+          sheetCategory: sheetStore.storeCategory,
+          sheetAddress: sheetStore.address,
+          sheetPhone: sheetStore.phone,
+          localId: local.id,
+          localStoreCode: local.storeCode,
+          localStoreName: local.storeName,
+          localLat: local.latitude,
+          localLng: local.longitude,
+          localCategory: local.storeCategory,
+          localAddress: local.address,
+          localPhone: local.phone,
+          status,
+          issues
+        });
+      }
+    });
+
+    // 2. Identify extra stores in local registry that do NOT exist in 'DATA FIX'
+    localStores.forEach((ls) => {
+      if (!matchedLocalIds.has(ls.id)) {
+        items.push({
+          id: `diff-extra-${ls.id}`,
+          sheetStoreCode: '-',
+          sheetStoreName: '-',
+          sheetLat: 0,
+          sheetLng: 0,
+          sheetCategory: '-',
+          sheetAddress: '-',
+          sheetPhone: '-',
+          localId: ls.id,
+          localStoreCode: ls.storeCode,
+          localStoreName: ls.storeName,
+          localLat: ls.latitude,
+          localLng: ls.longitude,
+          localCategory: ls.storeCategory,
+          localAddress: ls.address,
+          localPhone: ls.phone,
+          status: 'EXTRA_IN_LOCAL',
+          issues: ['Outlet ini ada di database lokal, namun TIDAK TERDAFTAR dalam Google Sheet "DATA FIX" (potensi data warisan/mock lama).']
+        });
+      }
+    });
+
+    return items;
+  }, [localStores]);
+
+  // Diff summary metrics
+  const diffSummary = useMemo(() => {
+    const sheetCount = DATA_FIX_SHEET_PRESETS.length;
+    const localCount = localStores.length;
+    const syncedCount = diffResults.filter((d) => d.status === 'SYNCED').length;
+    const missingCount = diffResults.filter((d) => d.status === 'MISSING_IN_LOCAL').length;
+    const mismatchCount = diffResults.filter((d) => d.status === 'MISMATCH').length;
+    const extraCount = diffResults.filter((d) => d.status === 'EXTRA_IN_LOCAL').length;
+    const totalIssues = missingCount + mismatchCount + extraCount;
+    const healthPercent = sheetCount > 0 ? Math.round((syncedCount / Math.max(sheetCount, localCount)) * 100) : 0;
+
+    return {
+      sheetCount,
+      localCount,
+      syncedCount,
+      missingCount,
+      mismatchCount,
+      extraCount,
+      totalIssues,
+      healthPercent
+    };
+  }, [diffResults, localStores]);
+
+  // Filtered diff table rows
+  const filteredDiffItems = useMemo(() => {
+    return diffResults.filter((item) => {
+      // Filter tab
+      if (diffFilter === 'issues' && item.status === 'SYNCED') return false;
+      if (diffFilter === 'synced' && item.status !== 'SYNCED') return false;
+
+      // Search query
+      if (!diffSearch) return true;
+      const q = diffSearch.toLowerCase();
+      return (
+        item.sheetStoreName.toLowerCase().includes(q) ||
+        item.sheetStoreCode.toLowerCase().includes(q) ||
+        (item.localStoreName && item.localStoreName.toLowerCase().includes(q)) ||
+        (item.localStoreCode && item.localStoreCode.toLowerCase().includes(q)) ||
+        (item.localId && item.localId.toLowerCase().includes(q))
+      );
+    });
+  }, [diffResults, diffFilter, diffSearch]);
+
+  const handleRunAutoFixSync = async () => {
+    setIsFixingSync(true);
+    try {
+      const res = await googleSheetsSyncService.syncNow('Diagnostik Diff Auto-Fix');
+      addNotification(
+        'schedule',
+        'Auto-Fix & Sinkronisasi Selesai!',
+        `Seluruh ${res.total} outlet dari Google Sheet 'DATA FIX' telah disinkronkan ke registry lokal tanpa perbedaan data.`
+      );
+    } finally {
+      setIsFixingSync(false);
+    }
+  };
 
   const fullSqlSchema = `-- ====================================================================
 -- SUPABASE POSTGRESQL ENTERPRISE LOGISTICS & B2B SUPPLY CHAIN SCHEMA
@@ -262,6 +511,372 @@ create policy "Tracking logs accessible by authenticated users"
             {copiedSection === 'all-sql' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             <span>{copiedSection === 'all-sql' ? 'Tersalin ke Clipboard!' : 'Salin Seluruh Skrip SQL'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Visual Live Sync Health & Discrepancy Component */}
+      <LiveSyncHealthCard />
+
+      {/* DEDICATED REAL-TIME DIFF & DEBUGGING DASHBOARD: GOOGLE SHEETS 'DATA FIX' VS LOCAL REGISTRY */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm space-y-6">
+        {/* Header of Debugging Dashboard */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-slate-800">
+          <div>
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-semibold mb-1 border border-blue-500/20">
+              <ArrowRightLeft className="w-3.5 h-3.5" />
+              <span>Real-Time Diff Engine &amp; Data Alignment</span>
+            </div>
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <span>Debugging Dashboard: Google Sheets &quot;DATA FIX&quot; vs Local Registry</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                diffSummary.totalIssues === 0 
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+              }`}>
+                {diffSummary.healthPercent}% Synced
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Melakukan inspeksi komparatif langsung antara lembar kerja Google Sheets &quot;{syncConfig.sheetName}&quot; (Source of Truth) dan memori registri lokal.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                googleSheetsSyncService.testCorruptedCoordinateNotification(2);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold shadow transition cursor-pointer active:scale-95"
+              title="Kirim simulasi data koordinat cacat untuk memverifikasi pemicuan peringatan darurat ke dashboard"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span>Uji Pemicu Notifikasi Rusak</span>
+            </button>
+
+            <button
+              onClick={handleRunAutoFixSync}
+              disabled={isFixingSync}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition cursor-pointer active:scale-95"
+              title="Paksa sinkronisasi ulang agar seluruh 15 toko dari DATA FIX menggantikan registry lokal"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isFixingSync ? 'animate-spin' : ''}`} />
+              <span>{isFixingSync ? 'Menyelaraskan Data...' : 'Jalankan Auto-Fix & Re-Sync (15 Toko)'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Side-by-Side Comparison Metrics */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Card 1: Google Sheets Source */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="flex items-center gap-1.5 font-medium">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                Google Sheets ({syncConfig.sheetName})
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono">Source of Truth</span>
+            </div>
+            <div className="text-2xl font-bold text-white font-mono mt-1">
+              {diffSummary.sheetCount} <span className="text-xs font-normal text-slate-400">Toko Terdaftar</span>
+            </div>
+            <div className="text-[11px] text-slate-500 truncate">
+              URL: {syncConfig.spreadsheetUrl.substring(0, 36)}...
+            </div>
+          </div>
+
+          {/* Card 2: Local Registry DB */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Database className="w-4 h-4 text-blue-400" />
+                Local Registry DB
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono">Reactive State</span>
+            </div>
+            <div className="text-2xl font-bold text-white font-mono mt-1">
+              {diffSummary.localCount} <span className="text-xs font-normal text-slate-400">Outlet Aktif</span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Tersimpan di LocalStorage &amp; Leaflet State
+            </div>
+          </div>
+
+          {/* Card 3: Matched / Perfectly Synced */}
+          <div className="bg-slate-950 p-4 rounded-xl border border-emerald-900/30 bg-emerald-950/10 space-y-1">
+            <div className="flex items-center justify-between text-xs text-emerald-400">
+              <span className="flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                Sinkron Sempurna
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold font-mono">100% Cocok</span>
+            </div>
+            <div className="text-2xl font-bold text-emerald-400 font-mono mt-1">
+              {diffSummary.syncedCount} <span className="text-xs font-normal text-emerald-300/80">Outlet</span>
+            </div>
+            <div className="text-[11px] text-emerald-500/80">
+              Nama, Kode, dan Koordinat GPS valid &amp; identik
+            </div>
+          </div>
+
+          {/* Card 4: Issues (Missing / Mismatch / Extra) */}
+          <div className={`bg-slate-950 p-4 rounded-xl border space-y-1 ${
+            diffSummary.totalIssues === 0 
+              ? 'border-slate-800' 
+              : 'border-amber-900/40 bg-amber-950/10'
+          }`}>
+            <div className="flex items-center justify-between text-xs text-amber-400">
+              <span className="flex items-center gap-1.5 font-medium">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                Perlu Tindakan / Selisih
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold font-mono">
+                {diffSummary.totalIssues} Isu
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-amber-400 font-mono mt-1">
+              {diffSummary.totalIssues} <span className="text-xs font-normal text-amber-300/80">Selisih Data</span>
+            </div>
+            <div className="text-[11px] text-slate-400 flex items-center gap-2">
+              <span>Hilang: <strong className="text-red-400">{diffSummary.missingCount}</strong></span>
+              <span>•</span>
+              <span>Mismatch: <strong className="text-amber-400">{diffSummary.mismatchCount}</strong></span>
+              <span>•</span>
+              <span>Ekstra: <strong className="text-blue-400">{diffSummary.extraCount}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Sync Diagnostic Log Summary */}
+        <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between text-xs gap-2">
+          <div className="flex items-center gap-3">
+            <span className="text-slate-400">Sinkronisasi Terakhir:</span>
+            <span className="text-white font-mono font-semibold">
+              {syncConfig.lastSyncTimestamp ? new Date(syncConfig.lastSyncTimestamp).toLocaleString('id-ID') : 'Belum pernah'}
+            </span>
+            <span className="text-slate-500">•</span>
+            <span className="text-slate-400">Interval Auto-Sync:</span>
+            <span className="text-emerald-400 font-semibold font-mono">
+              {syncConfig.isAutoSyncEnabled ? `Aktif (${syncConfig.autoSyncIntervalMinutes} Menit)` : 'Nonaktif'}
+            </span>
+          </div>
+
+          <div className="text-slate-400 text-[11px]">
+            {syncLogs[0] ? syncLogs[0].message : 'Tidak ada catatan riwayat'}
+          </div>
+        </div>
+
+        {/* Real-time Diff Comparison Table */}
+        <div className="space-y-3">
+          {/* Table Filters & Search */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 w-full sm:w-auto">
+              <button
+                onClick={() => setDiffFilter('all')}
+                className={`px-3 py-1.5 rounded-md font-semibold transition cursor-pointer ${
+                  diffFilter === 'all'
+                    ? 'bg-slate-800 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Semua ({diffResults.length})
+              </button>
+              <button
+                onClick={() => setDiffFilter('issues')}
+                className={`px-3 py-1.5 rounded-md font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  diffFilter === 'issues'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span>Gagal / Bermasalah ({diffSummary.totalIssues})</span>
+              </button>
+              <button
+                onClick={() => setDiffFilter('synced')}
+                className={`px-3 py-1.5 rounded-md font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  diffFilter === 'synced'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Cocok ({diffSummary.syncedCount})</span>
+              </button>
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Cari kode, nama toko, atau UUID..."
+                value={diffSearch}
+                onChange={(e) => setDiffSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Diff Table */}
+          <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+            <div className="overflow-x-auto max-h-[460px]">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800 sticky top-0 z-10 backdrop-blur">
+                  <tr>
+                    <th className="p-3 w-12 text-center">No</th>
+                    <th className="p-3 w-32">Status Sinkron</th>
+                    <th className="p-3">Sumber: Google Sheets (&quot;DATA FIX&quot;)</th>
+                    <th className="p-3">Database Lokal (Registry UUID &amp; Data)</th>
+                    <th className="p-3">Perbandingan Koordinat GPS</th>
+                    <th className="p-3 w-56">Diagnosis / Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-300">
+                  {filteredDiffItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
+                        Tidak ada entri data yang sesuai dengan filter pencarian diff.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredDiffItems.map((item, index) => {
+                      const isSynced = item.status === 'SYNCED';
+                      const isMissing = item.status === 'MISSING_IN_LOCAL';
+                      const isMismatch = item.status === 'MISMATCH';
+                      const isExtra = item.status === 'EXTRA_IN_LOCAL';
+
+                      return (
+                        <tr 
+                          key={item.id} 
+                          className={`hover:bg-slate-900/50 transition ${
+                            isMissing 
+                              ? 'bg-red-950/20' 
+                              : isMismatch 
+                              ? 'bg-amber-950/20' 
+                              : isExtra 
+                              ? 'bg-blue-950/20' 
+                              : ''
+                          }`}
+                        >
+                          {/* Col 1: No */}
+                          <td className="p-3 text-center font-mono text-slate-400">
+                            {item.sourceNo ?? index + 1}
+                          </td>
+
+                          {/* Col 2: Status Badge */}
+                          <td className="p-3">
+                            {isSynced && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>SYNCED OK</span>
+                              </span>
+                            )}
+                            {isMissing && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
+                                <XCircle className="w-3 h-3" />
+                                <span>MISSING IN DB</span>
+                              </span>
+                            )}
+                            {isMismatch && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                <AlertTriangle className="w-3 h-3" />
+                                <span>MISMATCH</span>
+                              </span>
+                            )}
+                            {isExtra && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                <AlertCircle className="w-3 h-3" />
+                                <span>EXTRA IN DB</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Col 3: Google Sheets Source */}
+                          <td className="p-3 space-y-0.5">
+                            {item.sheetStoreName !== '-' ? (
+                              <>
+                                <div className="font-bold text-white flex items-center gap-1.5">
+                                  <span>{item.sheetStoreName}</span>
+                                </div>
+                                <div className="text-[11px] text-emerald-400 font-mono">
+                                  {item.sheetStoreCode} • {item.sheetCategory}
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate max-w-xs">
+                                  {item.sheetAddress}
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-slate-500 italic">Tidak ada di Sheet DATA FIX</span>
+                            )}
+                          </td>
+
+                          {/* Col 4: Local Registry (UUID & Store Name) */}
+                          <td className="p-3 space-y-0.5">
+                            {item.localId ? (
+                              <>
+                                <div className="font-bold text-white flex items-center gap-1.5">
+                                  <span>{item.localStoreName}</span>
+                                </div>
+                                <div className="text-[11px] text-blue-400 font-mono flex items-center gap-1">
+                                  <span>UUID:</span>
+                                  <strong className="text-slate-200">{item.localId}</strong>
+                                  <span className="text-slate-500">• {item.localStoreCode}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate max-w-xs">
+                                  {item.localAddress}
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-red-400 font-mono text-[11px] bg-red-500/10 px-2 py-1 rounded border border-red-500/20 inline-block">
+                                Belum tersimpan di Local Registry
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Col 5: GPS Coordinates Comparison */}
+                          <td className="p-3 font-mono text-[11px] space-y-1">
+                            {item.sheetStoreName !== '-' && (
+                              <div className="text-slate-400">
+                                <span className="text-emerald-400 font-semibold">Sheet:</span> {item.sheetLat.toFixed(6)}, {item.sheetLng.toFixed(6)}
+                              </div>
+                            )}
+                            {item.localId ? (
+                              <div className={
+                                item.sheetStoreName !== '-' && (Math.abs(item.sheetLat - (item.localLat ?? 0)) > 0.0005 || Math.abs(item.sheetLng - (item.localLng ?? 0)) > 0.0005)
+                                  ? 'text-amber-400 font-bold'
+                                  : 'text-slate-300'
+                              }>
+                                <span className="text-blue-400 font-semibold">Local:</span> {item.localLat?.toFixed(6)}, {item.localLng?.toFixed(6)}
+                              </div>
+                            ) : (
+                              <div className="text-slate-500">-</div>
+                            )}
+                          </td>
+
+                          {/* Col 6: Diagnosis & Action */}
+                          <td className="p-3 space-y-1">
+                            {item.issues.length === 0 ? (
+                              <div className="text-emerald-400 text-[11px] flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Data identik &amp; valid di peta</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                {item.issues.map((iss, i) => (
+                                  <div key={i} className="text-[11px] text-amber-300 leading-tight">
+                                    • {iss}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { Compass, RotateCcw } from 'lucide-react';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
 import { RetailStore, TrackingPoint, RouteStop } from '../types';
 
@@ -31,7 +32,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   highlightIsland = 'all',
   centerCoords,
   zoomLevel = 6,
-  heightClass = 'h-[520px]',
+  heightClass = 'h-full min-h-[480px] w-full',
   plannedPolyline = [],
   isFleetMode = false,
   selectedFleetName
@@ -39,6 +40,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const userInteractedRef = useRef<boolean>(false);
+  const initialFitDoneRef = useRef<boolean>(false);
+  const lastFilterKeyRef = useRef<string>('');
+  const lastSelectedStoreIdRef = useRef<string | null>(null);
+  const currentBoundsRef = useRef<L.LatLngBounds | null>(null);
 
   // Initialize Map
   useEffect(() => {
@@ -48,13 +54,26 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       delete (mapContainerRef.current as any)._leaflet_id;
     }
 
-    const initialCenter: [number, number] = centerCoords || [-3.5, 115.0]; // Centered on Indonesia archipelago
+    const initialCenter: [number, number] = centerCoords || [-8.3, 114.25]; // Banyuwangi / East Java region default
 
     const map = L.map(mapContainerRef.current, {
       center: initialCenter,
       zoom: zoomLevel,
       zoomControl: true,
       scrollWheelZoom: true
+    });
+
+    // Detect user pan/drag and zoom events so automatic re-renders do NOT override user positioning
+    map.on('movestart', (e: any) => {
+      if (e && e.originalEvent) {
+        userInteractedRef.current = true;
+      }
+    });
+
+    map.on('zoomstart', (e: any) => {
+      if (e && e.originalEvent) {
+        userInteractedRef.current = true;
+      }
     });
 
     // Standard OpenStreetMap tiles (No API key required, reliable and clean)
@@ -68,6 +87,32 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     layerGroupRef.current = layerGroup;
     mapInstanceRef.current = map;
 
+    // Use dynamic ResizeObserver to gracefully handle container dimension changes
+    // without causing 'snap-back' jumping or resetting zoom/pan coordinates
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && mapContainerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        if (mapInstanceRef.current) {
+          const currentCenter = mapInstanceRef.current.getCenter();
+          const currentZoom = mapInstanceRef.current.getZoom();
+
+          mapInstanceRef.current.invalidateSize({ pan: false });
+
+          // Preserve exact coordinates and zoom level during container resize
+          if (userInteractedRef.current) {
+            mapInstanceRef.current.setView(currentCenter, currentZoom, { animate: false });
+          } else if (currentBoundsRef.current) {
+            mapInstanceRef.current.fitBounds(currentBoundsRef.current, {
+              padding: [45, 45],
+              maxZoom: 13,
+              animate: false
+            });
+          }
+        }
+      });
+      resizeObserver.observe(mapContainerRef.current);
+    }
+
     // Invalidate size after layout stabilization
     const timer = setTimeout(() => {
       map.invalidateSize();
@@ -75,6 +120,9 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     return () => {
       clearTimeout(timer);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       if (mapInstanceRef.current) {
         try {
           mapInstanceRef.current.stop();
@@ -93,6 +141,19 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     const map = mapInstanceRef.current;
     const layerGroup = layerGroupRef.current;
     if (!map || !layerGroup) return;
+
+    // Check if user changed the filter, fleet mode, or store count
+    const filterKey = `${highlightIsland}_${isFleetMode ? selectedFleetName : ''}_${stores.length}_${trackingPoints.length}_${stops.length}`;
+    const filterChanged = filterKey !== lastFilterKeyRef.current;
+    const storeSelectionChanged = selectedStoreId !== lastSelectedStoreIdRef.current;
+
+    lastFilterKeyRef.current = filterKey;
+    lastSelectedStoreIdRef.current = selectedStoreId;
+
+    if (filterChanged || (storeSelectionChanged && selectedStoreId)) {
+      // If user actively changed filters or picked a specific store, allow camera realignment
+      userInteractedRef.current = false;
+    }
 
     try {
       map.stop();
@@ -151,6 +212,13 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     });
 
     filteredStores.forEach(store => {
+      let lat = Number(store.latitude);
+      let lng = Number(store.longitude);
+
+      // Guard against invalid coordinates or NaN so Leaflet never crashes
+      if (isNaN(lat) || !isFinite(lat) || lat === 0) lat = -8.3645;
+      if (isNaN(lng) || !isFinite(lng) || lng === 0) lng = 114.1529;
+
       const isSelected = selectedStoreId === store.id;
       const isOuterIsland = store.island !== 'Jawa';
 
@@ -174,7 +242,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         iconAnchor: [16, 24]
       });
 
-      const storeMarker = L.marker([store.latitude, store.longitude], { icon: storeIcon })
+      const storeMarker = L.marker([lat, lng], { icon: storeIcon })
         .on('click', () => {
           if (onSelectStore) onSelectStore(store);
         });
@@ -205,28 +273,29 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       storeMarker.bindPopup(popupContent);
 
       layerGroup.addLayer(storeMarker);
-      bounds.push([store.latitude, store.longitude]);
+      bounds.push([lat, lng]);
 
       // Connect warehouse to store with subtle corridor lines if requested
       if (showWarehouse) {
-        const polyline = L.polyline([CENTRAL_WAREHOUSE.coordinates, [store.latitude, store.longitude]], {
+        const polyline = L.polyline([CENTRAL_WAREHOUSE.coordinates, [lat, lng]], {
           color: isOuterIsland ? '#059669' : '#6366f1',
-          weight: 1.5,
-          opacity: 0.35,
-          dashArray: '4, 8'
+          weight: 2,
+          opacity: 0.6,
+          dashArray: '5, 8'
         });
+        polyline.bindTooltip(`Koridor Suplai Langsung: Banyuwangi DC ➔ ${store.storeName}`, { sticky: true });
         layerGroup.addLayer(polyline);
       }
     });
 
-    // 3. Planned polyline
+    // 3. Planned polyline (Comprehensive Delivery Loop connecting ALL stores)
     if (plannedPolyline && plannedPolyline.length > 1) {
       const plannedLine = L.polyline(plannedPolyline, {
-        color: '#94a3b8',
-        weight: 3,
-        dashArray: '6, 6',
-        opacity: 0.8
-      }).bindTooltip('Rute Koridor Terencana', { sticky: true });
+        color: '#2563eb',
+        weight: 3.5,
+        dashArray: '8, 8',
+        opacity: 0.95
+      }).bindTooltip('Jalur Rute Pengiriman Terpadu (Menghubungkan Seluruh 15 Toko Mitra PT AKK)', { sticky: true });
       layerGroup.addLayer(plannedLine);
     }
 
@@ -364,21 +433,60 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       bounds.push([stop.latitude, stop.longitude]);
     });
 
-    // Auto fit bounds or set view
-    if (centerCoords) {
-      map.setView(centerCoords, zoomLevel, { animate: false });
-    } else if (bounds.length > 0) {
-      map.fitBounds(L.latLngBounds(bounds), {
-        padding: [40, 40],
-        maxZoom: 14,
-        animate: false
-      });
+    if (bounds.length > 0) {
+      currentBoundsRef.current = L.latLngBounds(bounds);
+    }
+
+    // Only auto-center/fitBounds if user has NOT manually dragged/zoomed the map,
+    // OR if it's the initial load, OR if an intentional filter/store selection occurred.
+    if (!userInteractedRef.current || !initialFitDoneRef.current) {
+      if (selectedStoreId) {
+        const selectedStore = stores.find(s => s.id === selectedStoreId);
+        if (selectedStore) {
+          const sLat = Number(selectedStore.latitude);
+          const sLng = Number(selectedStore.longitude);
+          if (!isNaN(sLat) && !isNaN(sLng)) {
+            map.setView([sLat, sLng], Math.max(map.getZoom(), 13), { animate: true });
+          }
+        }
+      } else if (centerCoords) {
+        map.setView(centerCoords, zoomLevel, { animate: false });
+      } else if (bounds.length > 0) {
+        map.fitBounds(L.latLngBounds(bounds), {
+          padding: [45, 45],
+          maxZoom: 13,
+          animate: initialFitDoneRef.current
+        });
+        initialFitDoneRef.current = true;
+      }
     }
   }, [stores, selectedStoreId, trackingPoints, stops, showWarehouse, highlightIsland, plannedPolyline, isFleetMode, selectedFleetName, centerCoords, zoomLevel]);
 
+  const handleResetView = () => {
+    if (mapInstanceRef.current && currentBoundsRef.current) {
+      userInteractedRef.current = false;
+      mapInstanceRef.current.fitBounds(currentBoundsRef.current, {
+        padding: [45, 45],
+        maxZoom: 13,
+        animate: true
+      });
+    }
+  };
+
   return (
-    <div className={`relative w-full ${heightClass} rounded-xl overflow-hidden shadow-inner border border-slate-800`}>
-      <div ref={mapContainerRef} className="w-full h-full" />
+    <div className={`relative w-full ${heightClass} rounded-xl overflow-hidden shadow-inner border border-slate-800 flex flex-col`}>
+      {/* Floating Re-center / Fit All Stores Button */}
+      <button
+        type="button"
+        onClick={handleResetView}
+        className="absolute top-3 right-3 z-[400] bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 px-2.5 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 text-xs font-semibold backdrop-blur-sm transition cursor-pointer active:scale-95"
+        title="Pusatkan kembali peta ke seluruh outlet"
+      >
+        <Compass className="w-3.5 h-3.5 text-amber-400" />
+        <span>Pusatkan Peta</span>
+      </button>
+
+      <div ref={mapContainerRef} className="w-full h-full flex-1" style={{ width: '100%', height: '100%', minHeight: '100%' }} />
     </div>
   );
 };

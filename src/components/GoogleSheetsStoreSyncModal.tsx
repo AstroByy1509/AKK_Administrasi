@@ -24,7 +24,12 @@ import {
 import { logisticsStore } from '../services/store';
 import { RetailStore } from '../types';
 import { useToast } from '../context/ToastContext';
-import { googleSheetsSyncService, GoogleSheetsSyncConfig, SyncLogEntry } from '../services/googleSheetsSyncService';
+import { 
+  googleSheetsSyncService, 
+  GoogleSheetsSyncConfig, 
+  SyncLogEntry, 
+  validateCoordinateData 
+} from '../services/googleSheetsSyncService';
 
 interface GoogleSheetsStoreSyncModalProps {
   isOpen: boolean;
@@ -246,34 +251,58 @@ export const DATA_FIX_SHEET_PRESETS = [
   }
 ];
 
-// Helper to sanitize Indonesian spreadsheet coordinates
+// Helper to sanitize Indonesian spreadsheet coordinates safely without returning NaN
 export function sanitizeCoordinate(val: string | number, isLongitude = false): number {
-  if (typeof val === 'number') return val;
-  if (!val) return isLongitude ? 114.15 : -8.36;
+  const fallback = isLongitude ? 114.1529 : -8.3645;
+
+  if (typeof val === 'number') {
+    return isNaN(val) || !isFinite(val) ? fallback : val;
+  }
+  if (!val) return fallback;
 
   let str = String(val).trim();
+  // Normalize unicode dashes/minus signs (–, —, −) to standard ascii '-'
+  str = str.replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, '');
 
   // If combined like "-8.364883, 114.156321"
   if (str.includes(',')) {
     const parts = str.split(',');
-    if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
-      return isLongitude ? Number(parts[1].trim()) : Number(parts[0].trim());
+    if (parts.length === 2) {
+      const partNum = Number(parts[isLongitude ? 1 : 0].trim());
+      if (!isNaN(partNum) && isFinite(partNum)) {
+        return partNum;
+      }
     }
   }
 
-  // Remove dots used as thousand separators (e.g., -8.364.531.968 -> -8.364531968)
-  if (str.startsWith('-')) {
-    // Latitude (e.g. -8.364.531.968)
-    const cleanNum = str.replace(/\./g, ''); // -8364531968
-    const numPart = cleanNum.substring(1); // 8364531968
-    return -Number(numPart.substring(0, 1) + '.' + numPart.substring(1));
-  } else {
-    // Longitude (e.g. 11.419.375 -> 114.19375 or 114.391.371)
-    const cleanNum = str.replace(/\./g, ''); // 11419375 or 114391371
-    if (cleanNum.startsWith('11')) {
-      return Number(cleanNum.substring(0, 3) + '.' + cleanNum.substring(3));
+  // Check if standard single-period float already (e.g. "-8.364810" or "114.1529")
+  if (str.indexOf('.') === str.lastIndexOf('.') && str.indexOf('.') !== -1) {
+    const standardFloat = parseFloat(str);
+    if (!isNaN(standardFloat) && isFinite(standardFloat)) {
+      if (isLongitude && standardFloat >= 95 && standardFloat <= 145) return standardFloat;
+      if (!isLongitude && standardFloat <= 0 && standardFloat >= -12) return standardFloat;
+      if (!isLongitude && standardFloat > 0 && standardFloat <= 12) return -standardFloat;
     }
-    return Number(cleanNum);
+  }
+
+  // Strip all non-digits
+  const digitsOnly = str.replace(/[^0-9]/g, '');
+  if (!digitsOnly) return fallback;
+
+  if (isLongitude) {
+    // Indonesian longitude in Java/Bali is around 110-116
+    let parsed = parseFloat(digitsOnly.substring(0, 3) + '.' + digitsOnly.substring(3));
+    if (isNaN(parsed) || parsed < 95 || parsed > 145) {
+      parsed = fallback;
+    }
+    return parsed;
+  } else {
+    // Indonesian latitude in Banyuwangi / Java is around -8.1 to -8.5
+    let parsed = -parseFloat(digitsOnly.substring(0, 1) + '.' + digitsOnly.substring(1));
+    if (isNaN(parsed) || parsed > 0 || parsed < -12) {
+      parsed = fallback;
+    }
+    return parsed;
   }
 }
 
@@ -317,17 +346,35 @@ export const GoogleSheetsStoreSyncModal: React.FC<GoogleSheetsStoreSyncModalProp
     }, 800);
   };
 
-  const handleImportToSystem = () => {
-    const res = googleSheetsSyncService.syncNow('Picu Manual Modal UI');
-    setSyncSuccessCount(res.total);
+  const handleImportToSystem = async () => {
+    setIsFetching(true);
+    try {
+      const res = await googleSheetsSyncService.syncNow('Picu Manual Modal UI');
+      setSyncSuccessCount(res.total);
 
-    addNotification(
-      'schedule',
-      'Sinkronisasi Otomatis Google Sheets Berhasil!',
-      `${res.total} Toko Retail dari sheet "${selectedSheetName}" disinkronkan ke database & peta sistem!`
-    );
+      if (res.corruptedCount > 0) {
+        addNotification(
+          'sla_warning',
+          `⚠️ Terdeteksi ${res.corruptedCount} Koordinat Rusak di Google Sheet!`,
+          `Sebanyak ${res.corruptedCount} toko memiliki format koordinat cacat pada sheet "${selectedSheetName}" dan ditandai Needs Correction. Peringatan darurat telah dikirim ke Dashboard.`,
+          true
+        );
+      } else {
+        addNotification(
+          'schedule',
+          'Sinkronisasi Google Sheets Berhasil!',
+          `Semua ${res.total} Toko Retail dari sheet "${selectedSheetName}" berhasil diverifikasi dan langsung aktif di peta!`
+        );
+      }
 
-    if (onSuccessSync) onSuccessSync();
+      if (onSuccessSync) onSuccessSync();
+      // Auto close after 1.2s to show updated map immediately
+      setTimeout(() => {
+        onClose();
+      }, 800);
+    } finally {
+      setIsFetching(false);
+    }
   };
 
   const handleToggleAutoSync = (enabled: boolean) => {
@@ -511,31 +558,51 @@ export const GoogleSheetsStoreSyncModal: React.FC<GoogleSheetsStoreSyncModalProp
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80 text-slate-300 font-mono text-[11px]">
-                      {parsedStores.map((row) => (
-                        <tr key={row.no} className="hover:bg-slate-900/60 transition">
-                          <td className="p-2.5 text-center font-bold text-slate-400">{row.no}</td>
-                          <td className="p-2.5 font-bold text-emerald-400">{row.storeCode}</td>
-                          <td className="p-2.5 font-sans font-bold text-white">{row.storeName}</td>
-                          <td className="p-2.5 font-sans">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
-                              {row.storeCategory}
-                            </span>
-                          </td>
-                          <td className="p-2.5">
-                            <div className="text-slate-400 line-through text-[10px]">{row.rawLat}</div>
-                            <div className="text-emerald-400 font-bold">{row.latitude}</div>
-                          </td>
-                          <td className="p-2.5">
-                            <div className="text-slate-400 line-through text-[10px]">{row.rawLng}</div>
-                            <div className="text-emerald-400 font-bold">{row.longitude}</div>
-                          </td>
-                          <td className="p-2.5 text-center">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                              ✓ Valid GPS
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {parsedStores.map((row) => {
+                        const valResult = validateCoordinateData(row.rawLat, row.rawLng);
+                        return (
+                          <tr key={row.no} className={`hover:bg-slate-900/60 transition ${!valResult.isValid ? 'bg-red-950/20' : ''}`}>
+                            <td className="p-2.5 text-center font-bold text-slate-400">{row.no}</td>
+                            <td className="p-2.5 font-bold text-emerald-400">{row.storeCode}</td>
+                            <td className="p-2.5 font-sans font-bold text-white">{row.storeName}</td>
+                            <td className="p-2.5 font-sans">
+                              <span className={`px-2 py-0.5 rounded text-[10px] border ${
+                                valResult.isValid 
+                                  ? 'bg-slate-800 text-slate-300 border-slate-700' 
+                                  : 'bg-red-900/30 text-red-300 border-red-500/30 font-bold'
+                              }`}>
+                                {valResult.isValid ? row.storeCategory : 'Needs Correction'}
+                              </span>
+                            </td>
+                            <td className="p-2.5">
+                              <div className="text-slate-400 line-through text-[10px]">{row.rawLat}</div>
+                              <div className={valResult.isLatCorrupted ? 'text-red-400 font-bold font-mono' : 'text-emerald-400 font-bold font-mono'}>
+                                {row.latitude}
+                              </div>
+                            </td>
+                            <td className="p-2.5">
+                              <div className="text-slate-400 line-through text-[10px]">{row.rawLng}</div>
+                              <div className={valResult.isLngCorrupted ? 'text-red-400 font-bold font-mono' : 'text-emerald-400 font-bold font-mono'}>
+                                {row.longitude}
+                              </div>
+                            </td>
+                            <td className="p-2.5 text-center">
+                              {valResult.isValid ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  ✓ Valid GPS
+                                </span>
+                              ) : (
+                                <span 
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse cursor-help"
+                                  title={valResult.reason}
+                                >
+                                  ⚠ Rusak (Needs Correction)
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -603,6 +670,29 @@ export const GoogleSheetsStoreSyncModal: React.FC<GoogleSheetsStoreSyncModalProp
                   </div>
                 </div>
 
+                {/* Diagnostic & Validation Testing Panel */}
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <span>Skema Validasi &amp; Pemicu Notifikasi Koordinat Rusak</span>
+                    </span>
+                    <button
+                      onClick={() => {
+                        googleSheetsSyncService.testCorruptedCoordinateNotification(2);
+                      }}
+                      className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center justify-center gap-1 shadow transition cursor-pointer"
+                      title="Kirim simulasi peringatan koordinat rusak ke dashboard"
+                    >
+                      <Zap className="w-3 h-3" />
+                      <span>Uji Pemicu Notifikasi Rusak</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Setiap baris koordinat diuji terhadap format angka, nilai kosong, nilai 0, nilai NaN, serta batas geografis Indonesia. Jika terdeteksi cacat, data langsung ditandai <code>Needs Correction</code> dan sistem memicu alert &apos;sla_warning&apos; ke dashboard secara instan.
+                  </p>
+                </div>
+
                 <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-lg flex items-center justify-between text-xs">
                   <div className="text-slate-400">
                     <span>Terakhir kali disinkronkan: </span>
@@ -611,12 +701,12 @@ export const GoogleSheetsStoreSyncModal: React.FC<GoogleSheetsStoreSyncModalProp
                     </strong>
                   </div>
                   <button
-                    onClick={() => {
-                      const res = googleSheetsSyncService.syncNow('Picu Manual Pengaturan');
+                    onClick={async () => {
+                      const res = await googleSheetsSyncService.syncNow('Picu Manual Pengaturan');
                       addNotification(
                         'schedule',
                         'Sinkronisasi Ulang Berhasil',
-                        `${res.total} toko retail dari sheet '${config.sheetName}' berhasil diverifikasi &amp; disinkronkan.`
+                        `${res.total} toko retail dari sheet '${config.sheetName}' berhasil diverifikasi & disinkronkan.`
                       );
                     }}
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"

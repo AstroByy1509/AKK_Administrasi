@@ -27,13 +27,35 @@ import { logisticsStore } from './services/store';
 import { ShieldCheck, Clock, AlertTriangle, LogIn, ChevronLeft, ChevronRight, Bell } from 'lucide-react';
 import { useToast } from './context/ToastContext';
 
+const LiveClockBadge: React.FC = () => {
+  const [time, setTime] = useState(() =>
+    new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB'
+  );
+
+  useEffect(() => {
+    const updateTime = () => {
+      setTime(
+        new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB'
+      );
+    };
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-slate-300 font-mono text-xs shadow-inner">
+      <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+      <span>{time}</span>
+    </div>
+  );
+};
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [preselectedStore, setPreselectedStore] = useState<RetailStore | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authDefaultTab, setAuthDefaultTab] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<UserProfile>(logisticsStore.getCurrentUser());
-  const [currentTime, setCurrentTime] = useState<string>('');
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
     try {
       return localStorage.getItem('akk_sidebar_minimized') === 'true';
@@ -58,18 +80,6 @@ export default function App() {
       return next;
     });
   };
-
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentTime(
-        now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB'
-      );
-    };
-    updateTime();
-    const timer = setInterval(updateTime, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     return logisticsStore.subscribe(() => {
@@ -179,10 +189,7 @@ export default function App() {
             </div>
 
             {/* Live Time Badge */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-slate-300 font-mono text-xs shadow-inner">
-              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>{currentTime}</span>
-            </div>
+            <LiveClockBadge />
 
             {/* Notification Bell Button */}
             <button
