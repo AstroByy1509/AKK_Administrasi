@@ -270,10 +270,10 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 type="button"
                 onClick={() => setShowRoutes(!showRoutes)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${showRoutes ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 text-slate-400'} border border-slate-800 transition cursor-pointer flex items-center gap-1.5`}
-                title="Tampilkan garis titik-titik rute pengiriman ke seluruh 15 toko"
+                title="Tampilkan/Sembunyikan garis rute pengiriman"
               >
                 <Route className="w-3.5 h-3.5" />
-                <span>{showRoutes ? 'Sembunyikan Rute (15 Toko)' : 'Tampilkan Rute (15 Toko)'}</span>
+                <span>{showRoutes ? 'Sembunyikan Rute' : 'Tampilkan Rute'}</span>
               </button>
               <select
                 value={selectedIsland}

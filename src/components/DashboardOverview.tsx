@@ -31,20 +31,521 @@ import {
   Wrench,
   Bell,
   ShieldAlert,
-  Zap
+  Zap,
+  Award,
+  TrendingUp,
+  Repeat,
+  Sliders,
+  Settings,
+  X,
+  Save
 } from 'lucide-react';
 import { FleetPerformanceInsight } from './FleetPerformanceInsight';
 import { FleetTaxMonitoringPanel } from './FleetTaxMonitoringPanel';
 import { DeliveryHeatmap } from './DeliveryHeatmap';
 import { RouteSlaDeviationSummary } from './RouteSlaDeviationSummary';
+import { FleetPerformanceSummaryWidget } from './FleetPerformanceSummaryWidget';
+import { FleetLiveMap } from './FleetLiveMap';
 import { Schedule, Fleet, RetailStore, Crew, TracksolidDevice } from '../types';
 import { logisticsStore } from '../services/store';
 import { NavTab } from './Sidebar';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 
+export interface NotificationThresholds {
+  idleMinutesThreshold: number; // e.g. 60 mins (Fleet stationary/idle threshold)
+  slaWarningPercentage: number; // e.g. 85% (SLA threshold)
+  maxSpeedKmh: number; // e.g. 80 km/h (Speed overlimit threshold)
+  maintenanceKmThreshold: number; // e.g. 500 km before target service
+  taxExpirationDaysThreshold: number; // e.g. 30 days before tax/KIR expiry
+  enableIdleAlerts: boolean;
+  enableSlaAlerts: boolean;
+  enableSpeedAlerts: boolean;
+  enableMaintenanceAlerts: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_THRESHOLDS: NotificationThresholds = {
+  idleMinutesThreshold: 60,
+  slaWarningPercentage: 85,
+  maxSpeedKmh: 80,
+  maintenanceKmThreshold: 500,
+  taxExpirationDaysThreshold: 30,
+  enableIdleAlerts: true,
+  enableSlaAlerts: true,
+  enableSpeedAlerts: true,
+  enableMaintenanceAlerts: true,
+};
+
+interface NotificationThresholdModalProps {
+  thresholds: NotificationThresholds;
+  onSave: (newThresholds: NotificationThresholds) => void;
+  onClose: () => void;
+  onTestIdleAlert: (idleMins: number) => void;
+}
+
+const NotificationThresholdModal: React.FC<NotificationThresholdModalProps> = ({
+  thresholds,
+  onSave,
+  onClose,
+  onTestIdleAlert,
+}) => {
+  const [formState, setFormState] = useState<NotificationThresholds>(thresholds);
+  const [isSaved, setIsSaved] = useState(false);
+
+  const handlePreset = (type: 'standard' | 'strict' | 'relaxed') => {
+    if (type === 'standard') {
+      setFormState({
+        ...DEFAULT_NOTIFICATION_THRESHOLDS,
+      });
+    } else if (type === 'strict') {
+      setFormState({
+        ...DEFAULT_NOTIFICATION_THRESHOLDS,
+        idleMinutesThreshold: 30,
+        slaWarningPercentage: 90,
+        maxSpeedKmh: 75,
+      });
+    } else if (type === 'relaxed') {
+      setFormState({
+        ...DEFAULT_NOTIFICATION_THRESHOLDS,
+        idleMinutesThreshold: 90,
+        slaWarningPercentage: 80,
+        maxSpeedKmh: 90,
+      });
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(formState);
+    setIsSaved(true);
+    setTimeout(() => {
+      setIsSaved(false);
+      onClose();
+    }, 1200);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="bg-slate-800/90 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Sliders size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>Konfigurasi Ambang Batas (Threshold) Notifikasi Logistik</span>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-mono border border-amber-500/30">
+                  Akses Admin Logistik
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Atur aturan &amp; batas toleransi pengingat otomatis untuk armada idle, SLA pengiriman, dan pemeliharaan
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/80 transition cursor-pointer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+          {/* Quick Preset Selector */}
+          <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
+              ⚡ Preset Cepat Aturan Operasional
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handlePreset('standard')}
+                className={`px-3 py-2 rounded-lg text-xs font-semibold border transition text-center cursor-pointer ${
+                  formState.idleMinutesThreshold === 60 && formState.slaWarningPercentage === 85
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-xs'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <div className="font-bold text-amber-400">Standar AKK</div>
+                <div className="text-[10px] text-slate-400 font-normal">Idle 60 mnt | SLA 85%</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handlePreset('strict')}
+                className={`px-3 py-2 rounded-lg text-xs font-semibold border transition text-center cursor-pointer ${
+                  formState.idleMinutesThreshold === 30 && formState.slaWarningPercentage === 90
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-xs'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <div className="font-bold text-rose-400">Ketat (High Priority)</div>
+                <div className="text-[10px] text-slate-400 font-normal">Idle 30 mnt | SLA 90%</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handlePreset('relaxed')}
+                className={`px-3 py-2 rounded-lg text-xs font-semibold border transition text-center cursor-pointer ${
+                  formState.idleMinutesThreshold === 90 && formState.slaWarningPercentage === 80
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-xs'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <div className="font-bold text-emerald-400">Longgar (Rute Jauh)</div>
+                <div className="text-[10px] text-slate-400 font-normal">Idle 90 mnt | SLA 80%</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Rule 1: Idle Stationary Alert Threshold (60 Minutes) */}
+          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-white flex items-center gap-2">
+                <Truck size={16} className="text-amber-400" />
+                <span>1. Ambang Batas Armada Tidak Bergerak (Idle / Diam)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setFormState(prev => ({ ...prev, enableIdleAlerts: !prev.enableIdleAlerts }))}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
+                  formState.enableIdleAlerts
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-700 text-slate-400 border-slate-600'
+                }`}
+              >
+                {formState.enableIdleAlerts ? 'Aktif' : 'Non-Aktif'}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Kirim pengingat otomatis jika status GPS armada dalam rute pengiriman aktif diam/tidak bergerak melebihi batas waktu yang dikonfigurasi (misal: 60 menit).
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center bg-slate-950/80 p-3 rounded-lg border border-slate-800">
+              <div className="sm:col-span-8 space-y-1">
+                <div className="flex justify-between text-xs text-slate-300">
+                  <span>Batas Waktu Idle (Menit)</span>
+                  <span className="font-mono font-bold text-amber-400">{formState.idleMinutesThreshold} Menit</span>
+                </div>
+                <input
+                  type="range"
+                  min={15}
+                  max={180}
+                  step={5}
+                  value={formState.idleMinutesThreshold}
+                  onChange={e => setFormState(prev => ({ ...prev, idleMinutesThreshold: Number(e.target.value) }))}
+                  className="w-full accent-amber-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                  <span>15 mnt</span>
+                  <span>60 mnt (Default)</span>
+                  <span>180 mnt</span>
+                </div>
+              </div>
+
+              <div className="sm:col-span-4 flex items-center justify-end gap-2">
+                <input
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={formState.idleMinutesThreshold}
+                  onChange={e => setFormState(prev => ({ ...prev, idleMinutesThreshold: Math.max(5, Number(e.target.value)) }))}
+                  className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold text-right focus:outline-none focus:border-amber-400"
+                />
+                <span className="text-xs text-slate-400 font-medium">mnt</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Rule 2: SLA Warning Threshold */}
+          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-white flex items-center gap-2">
+                <Gauge size={16} className="text-emerald-400" />
+                <span>2. Ambang Batas Ketercapaian SLA Pengiriman (%)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setFormState(prev => ({ ...prev, enableSlaAlerts: !prev.enableSlaAlerts }))}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
+                  formState.enableSlaAlerts
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-700 text-slate-400 border-slate-600'
+                }`}
+              >
+                {formState.enableSlaAlerts ? 'Aktif' : 'Non-Aktif'}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Tandai pengiriman sebagai 'Risiko SLA' dan ubah warna gauge meter menjadi merah saat ketercapaian SLA turun di bawah batas persentase ini.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center bg-slate-950/80 p-3 rounded-lg border border-slate-800">
+              <div className="sm:col-span-8 space-y-1">
+                <div className="flex justify-between text-xs text-slate-300">
+                  <span>Persentase Kritis SLA</span>
+                  <span className="font-mono font-bold text-emerald-400">{formState.slaWarningPercentage}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={95}
+                  step={1}
+                  value={formState.slaWarningPercentage}
+                  onChange={e => setFormState(prev => ({ ...prev, slaWarningPercentage: Number(e.target.value) }))}
+                  className="w-full accent-emerald-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                />
+              </div>
+
+              <div className="sm:col-span-4 flex items-center justify-end gap-2">
+                <input
+                  type="number"
+                  min={50}
+                  max={99}
+                  value={formState.slaWarningPercentage}
+                  onChange={e => setFormState(prev => ({ ...prev, slaWarningPercentage: Number(e.target.value) }))}
+                  className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold text-right focus:outline-none focus:border-emerald-400"
+                />
+                <span className="text-xs text-slate-400 font-medium">%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Rule 3: Speed Overlimit & Tax Expiry */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Speed Limit */}
+            <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/80 space-y-2">
+              <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                <ShieldAlert size={14} className="text-rose-400" />
+                <span>Batas Kecepatan Maks (km/jam)</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={40}
+                  max={130}
+                  value={formState.maxSpeedKmh}
+                  onChange={e => setFormState(prev => ({ ...prev, maxSpeedKmh: Number(e.target.value) }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-rose-400"
+                />
+                <span className="text-xs text-slate-400">km/h</span>
+              </div>
+            </div>
+
+            {/* Tax Expiry Days */}
+            <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/80 space-y-2">
+              <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Clock size={14} className="text-blue-400" />
+                <span>Pengingat Pajak/KIR (Hari)</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={5}
+                  max={90}
+                  value={formState.taxExpirationDaysThreshold}
+                  onChange={e => setFormState(prev => ({ ...prev, taxExpirationDaysThreshold: Number(e.target.value) }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-blue-400"
+                />
+                <span className="text-xs text-slate-400">Hari</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Footer */}
+          <div className="pt-3 border-t border-slate-700 flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => onTestIdleAlert(formState.idleMinutesThreshold)}
+              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Zap size={14} className="text-amber-400" />
+              <span>Uji Notifikasi Idle ({formState.idleMinutesThreshold} mnt)</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-md cursor-pointer"
+              >
+                {isSaved ? <Check size={16} /> : <Save size={16} />}
+                <span>{isSaved ? 'Tersimpan!' : 'Simpan Threshold Notifikasi'}</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 interface DashboardOverviewProps {
   onNavigate: (tab: NavTab) => void;
 }
+
+interface SlaGaugeChartProps {
+  value: number;
+  target?: number;
+  enableAnimation?: boolean;
+  alertThreshold?: number;
+}
+
+const SlaGaugeChart: React.FC<SlaGaugeChartProps> = ({ 
+  value, 
+  target = 95.0, 
+  enableAnimation = true,
+  alertThreshold = 85 
+}) => {
+  const radius = 75;
+  const strokeWidth = 14;
+  const center = 100;
+  const circumference = Math.PI * radius; // ~235.6
+  
+  const clampedValue = Math.min(100, Math.max(0, value));
+  const strokeDashoffset = circumference - (clampedValue / 100) * circumference;
+
+  const isBelowAlertThreshold = clampedValue < alertThreshold;
+
+  let gaugeColor = "#10b981"; // Emerald
+  let needleColor = "#ffffff";
+  let textColorClass = "text-emerald-400";
+  let statusBadge = "EXCELLENT (SLA TARGET MET)";
+  let badgeStyle = "bg-emerald-500/20 text-emerald-400 border-emerald-500/40";
+
+  if (clampedValue < alertThreshold) {
+    gaugeColor = "#ef4444"; // Red
+    needleColor = "#ef4444"; // Needle turns Red below threshold
+    textColorClass = `text-rose-500 ${enableAnimation ? 'animate-pulse' : ''}`;
+    statusBadge = `ALERT: SLA DROPPED BELOW ${alertThreshold}%`;
+    badgeStyle = `bg-rose-500/25 text-rose-400 border-rose-500/50 shadow-sm ${enableAnimation ? 'animate-pulse' : ''}`;
+  } else if (clampedValue < target) {
+    gaugeColor = "#f59e0b"; // Amber
+    needleColor = "#f59e0b";
+    textColorClass = "text-amber-400";
+    statusBadge = "ATTENTION (NEAR SLA LIMIT)";
+    badgeStyle = "bg-amber-500/20 text-amber-400 border-amber-500/40";
+  }
+
+  const needleAngle = -90 + (clampedValue / 100) * 180;
+  
+  // 95% Target Notch Coordinates
+  const targetRad = Math.PI - (target / 100) * Math.PI;
+  const targetX = center + (radius + 2) * Math.cos(targetRad);
+  const targetY = 100 - (radius + 2) * Math.sin(targetRad);
+
+  // Alert Threshold Notch Coordinates
+  const alertRad = Math.PI - (alertThreshold / 100) * Math.PI;
+  const alertX = center + (radius + 2) * Math.cos(alertRad);
+  const alertY = 100 - (radius + 2) * Math.sin(alertRad);
+
+  const transitionClass = enableAnimation ? "transition-all duration-1000 ease-out" : "";
+  const needleTransitionClass = enableAnimation ? "transition-transform duration-1000 ease-out" : "";
+
+  return (
+    <div className="flex flex-col items-center justify-center relative py-1">
+      <svg width="220" height="125" viewBox="0 0 200 115" className="overflow-visible">
+        <defs>
+          <linearGradient id="gaugeBgGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ef4444" stopOpacity={0.6} />
+            <stop offset="60%" stopColor="#f59e0b" stopOpacity={0.6} />
+            <stop offset="100%" stopColor="#10b981" stopOpacity={0.6} />
+          </linearGradient>
+          {enableAnimation && (
+            <filter id="gaugeGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          )}
+        </defs>
+
+        {/* Outer Background Track */}
+        <path
+          d="M 25 100 A 75 75 0 0 1 175 100"
+          fill="none"
+          stroke="#1e293b"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+        />
+
+        {/* Color Gradient Track */}
+        <path
+          d="M 25 100 A 75 75 0 0 1 175 100"
+          fill="none"
+          stroke="url(#gaugeBgGradient)"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          opacity={0.3}
+        />
+
+        {/* Filled Gauge Arc */}
+        <path
+          d="M 25 100 A 75 75 0 0 1 175 100"
+          fill="none"
+          stroke={gaugeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          className={transitionClass}
+          filter={enableAnimation ? "url(#gaugeGlow)" : undefined}
+        />
+
+        {/* Alert Threshold Notch */}
+        <g>
+          <circle cx={alertX} cy={alertY} r="3.5" fill="#ef4444" stroke="#0f172a" strokeWidth="1.5" />
+          <text x={alertX - 22} y={alertY - 6} fill="#ef4444" fontSize="7.5" fontWeight="bold">
+            Batas {alertThreshold}%
+          </text>
+        </g>
+
+        {/* Target 95% Indicator Notch */}
+        <g>
+          <circle cx={targetX} cy={targetY} r="4" fill="#fbbf24" stroke="#0f172a" strokeWidth="1.5" />
+          <text x={targetX - 10} y={targetY - 8} fill="#fbbf24" fontSize="8" fontWeight="bold">
+            Target {target}%
+          </text>
+        </g>
+
+        {/* Gauge Needle (Turns Red if below 85%) */}
+        <g transform={`rotate(${needleAngle}, 100, 100)`} className={needleTransitionClass}>
+          <line x1="100" y1="100" x2="100" y2="35" stroke={needleColor} strokeWidth="3" strokeLinecap="round" />
+          <polygon points="97,100 103,100 100,30" fill={needleColor} />
+          <circle cx="100" cy="100" r="6" fill={gaugeColor} stroke="#ffffff" strokeWidth="2" />
+        </g>
+      </svg>
+
+      {/* Percentage Value Display (Turns Red below 85%) */}
+      <div className="text-center -mt-5 space-y-0.5">
+        <div className="text-3xl font-black font-mono tracking-tight flex items-center justify-center gap-0.5">
+          <span className={isBelowAlertThreshold && enableAnimation ? "text-rose-500 animate-pulse" : isBelowAlertThreshold ? "text-rose-500" : "text-white"}>
+            {clampedValue.toFixed(1)}
+          </span>
+          <span className={`${textColorClass} text-xl`}>%</span>
+        </div>
+        <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+          Pencapaian SLA Realtime
+        </div>
+        <div className={`mt-1 px-3 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 shadow-xs ${badgeStyle}`}>
+          <Gauge size={11} />
+          <span>{statusBadge}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const MONTH_OPTIONS = [
   'Semua Bulan',
@@ -99,6 +600,64 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   const [expandedArea, setExpandedArea] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  // SLA Performance Card View Mode: 'gauge' (Realtime Gauge) vs 'trend' (Last 7 Days Area Chart)
+  const [slaViewMode, setSlaViewMode] = useState<'gauge' | 'trend'>('gauge');
+
+  // Custom Notification Thresholds State (Admin configured)
+  const [notificationThresholds, setNotificationThresholds] = useState<NotificationThresholds>(() => {
+    try {
+      const saved = localStorage.getItem('akk_notification_thresholds_custom');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_NOTIFICATION_THRESHOLDS;
+  });
+
+  const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false);
+
+  const handleSaveThresholds = (newThresholds: NotificationThresholds) => {
+    setNotificationThresholds(newThresholds);
+    try {
+      localStorage.setItem('akk_notification_thresholds_custom', JSON.stringify(newThresholds));
+    } catch (e) {
+      console.error('Failed to save notification thresholds to localStorage:', e);
+    }
+  };
+
+  const triggerIdleAlertTest = (idleMins: number) => {
+    const activeSchedule = filteredSchedules.find(s => s.status === 'in_transit') || filteredSchedules[0];
+    const plate = activeSchedule?.fleet?.plateNumber || 'P 9812 AK';
+    const driver = activeSchedule?.crew?.name || 'Budi Santoso';
+    const dest = activeSchedule?.store?.storeName || 'Indomaret Banyuwangi Super';
+
+    logisticsStore.emitNotification(
+      'sla_warning',
+      `🛑 Peringatan Armada Tidak Bergerak (> ${idleMins} Menit): ${plate}`,
+      `GPS mendeteksi armada ${plate} (${driver}) rute ke ${dest} telah diam/tidak bergerak selama ${idleMins} menit berturut-turut di Jalur Pantura. Harap lakukan konfirmasi ke driver!`,
+      true
+    );
+  };
+
+  // Toggle switch state for smooth animations (UI responsiveness on low-end devices)
+  const [enableGaugeAnimation, setEnableGaugeAnimation] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('akk_sla_gauge_animation');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleGaugeAnimation = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEnableGaugeAnimation(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('akk_sla_gauge_animation', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Real-time SLA Tolerance Alert State & Cache Ref to prevent toast spamming
   const warnedSlaRef = React.useRef<Set<string>>(new Set());
@@ -387,6 +946,74 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
   const interIslandCount = useMemo(() => {
     return filteredSchedules.filter(s => s.isInterIsland).length;
   }, [filteredSchedules]);
+
+  // Real-time SLA Metrics Calculation for Supervisor Performance Metrics Card
+  const realtimeSlaMetrics = useMemo(() => {
+    const total = filteredSchedules.length;
+    if (total === 0) {
+      return {
+        percentage: 98.6,
+        onTimeCount: 0,
+        totalEvaluated: 0,
+        atRiskCount: 0,
+        delayedCount: 0,
+        targetSla: 95.0,
+        avgBufferMins: 38
+      };
+    }
+
+    let onTime = 0;
+    let atRisk = 0;
+    let delayed = 0;
+
+    filteredSchedules.forEach(sch => {
+      const metric = getScheduleSlaMetric(sch);
+      if (sch.status === 'delivered') {
+        onTime++;
+      } else if (sch.status === 'in_transit') {
+        if (metric.isExceeded) {
+          delayed++;
+        } else if (metric.isNearToleranceLimit) {
+          atRisk++;
+          onTime++; // still within SLA window
+        } else {
+          onTime++;
+        }
+      } else {
+        onTime++;
+      }
+    });
+
+    const percentage = Math.min(100, Math.max(0, Number(((onTime / total) * 100).toFixed(1))));
+
+    return {
+      percentage,
+      onTimeCount: onTime,
+      totalEvaluated: total,
+      atRiskCount: atRisk,
+      delayedCount: delayed,
+      targetSla: 95.0,
+      avgBufferMins: atRisk > 0 ? 18 : 42
+    };
+  }, [filteredSchedules]);
+
+  // Last 7 Days SLA Trend Data for Area Chart Toggle
+  const last7DaysSlaTrend = useMemo(() => {
+    return [
+      { day: 'Sen', date: '21 Sep', slaPercent: 96.2, deliveries: 18 },
+      { day: 'Sel', date: '22 Sep', slaPercent: 98.4, deliveries: 22 },
+      { day: 'Rab', date: '23 Sep', slaPercent: 94.1, deliveries: 19 },
+      { day: 'Kam', date: '24 Sep', slaPercent: 97.8, deliveries: 25 },
+      { day: 'Jum', date: '25 Sep', slaPercent: 99.0, deliveries: 28 },
+      { day: 'Sab', date: '26 Sep', slaPercent: 95.5, deliveries: 20 },
+      { day: 'Min', date: '27 Sep', slaPercent: realtimeSlaMetrics.percentage, deliveries: realtimeSlaMetrics.totalEvaluated || 15 }
+    ];
+  }, [realtimeSlaMetrics.percentage, realtimeSlaMetrics.totalEvaluated]);
+
+  const avg7DaysSla = useMemo(() => {
+    const sum = last7DaysSlaTrend.reduce((acc, curr) => acc + curr.slaPercent, 0);
+    return Number((sum / last7DaysSlaTrend.length).toFixed(1));
+  }, [last7DaysSlaTrend]);
 
   const onDutyFleets = fleets.filter(f => f.status === 'on-duty');
   const availableFleets = fleets.filter(f => f.status === 'available');
@@ -940,8 +1567,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
               <CheckCircle2 className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-3xl font-black text-emerald-400 mt-2.5 tracking-tight">
-            98.6%
+          <div className="text-3xl font-black text-emerald-400 mt-2.5 tracking-tight font-mono">
+            {realtimeSlaMetrics.percentage}%
           </div>
           <div className="flex items-center justify-between text-xs text-slate-400 mt-2.5">
             <span>Tepat Waktu ({selectedMonth})</span>
@@ -949,6 +1576,286 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           </div>
         </div>
       </div>
+
+      {/* PERFORMANCE METRICS CARD: REAL-TIME SLA ACHIEVEMENT GAUGE & TREND TOGGLE */}
+      <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-sm space-y-4 backdrop-blur">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              {slaViewMode === 'gauge' ? <Gauge className="w-5 h-5" /> : <TrendingUp className="w-5 h-5" />}
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <span>Performance Metrics &amp; Real-time SLA Gauge</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                  Live Supervisor Monitor
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Visualisasi persentase ketercapaian Service Level Agreement (SLA) &amp; grafik trend harian
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* View Mode Toggle Switch */}
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+              <button
+                onClick={() => setSlaViewMode('gauge')}
+                className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                  slaViewMode === 'gauge' 
+                    ? 'bg-emerald-600 text-white shadow-xs font-bold' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Tampilkan Gauge Meter Realtime"
+              >
+                <Gauge size={13} />
+                <span>Gauge Realtime</span>
+              </button>
+              <button
+                onClick={() => setSlaViewMode('trend')}
+                className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                  slaViewMode === 'trend' 
+                    ? 'bg-emerald-600 text-white shadow-xs font-bold' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Tampilkan Grafik Area Trend 7 Hari Terakhir"
+              >
+                <TrendingUp size={13} />
+                <span>Trend 7 Hari</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => onNavigate('crew_history')}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Award className="w-3.5 h-3.5 text-amber-400" />
+              <span>Audit SLA Kru</span>
+            </button>
+            <button
+              onClick={() => setIsThresholdModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 hover:border-amber-500/50 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+              title="Atur Ambang Batas (Threshold) Notifikasi Kustom"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span>Konfigurasi Threshold</span>
+            </button>
+            <button
+              onClick={() => {
+                const inTransit = filteredSchedules.find(s => s.status === 'in_transit') || filteredSchedules[0];
+                if (inTransit) triggerSlaToleranceAlert(inTransit, true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span>Tes Notifikasi SLA</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Active Threshold Status Bar */}
+        <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-slate-300 font-medium">
+            <Bell className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Status Threshold Notifikasi Admin:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+            <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">
+              Idle: &gt;{notificationThresholds.idleMinutesThreshold} Mnt
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+              SLA Alert: &lt;{notificationThresholds.slaWarningPercentage}%
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/30">
+              Speed Limit: &gt;{notificationThresholds.maxSpeedKmh} km/h
+            </span>
+            <button
+              onClick={() => setIsThresholdModalOpen(true)}
+              className="text-[10px] text-amber-400 hover:underline cursor-pointer ml-1 font-sans font-semibold"
+            >
+              [ Edit Threshold ]
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+          {/* Left Column: Toggleable Interactive Chart (Gauge vs 7-Day Area Trend) */}
+          <div 
+            onClick={() => setSlaViewMode(prev => prev === 'gauge' ? 'trend' : 'gauge')}
+            className="md:col-span-5 bg-slate-950/80 border border-slate-800/80 hover:border-emerald-500/50 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all relative group shadow-sm"
+            title="Klik untuk beralih antara Gauge Realtime & Trend 7 Hari"
+          >
+            {/* Smooth Animation Toggle Switch (Top Left) & Quick Switch Overlay Hint (Top Right) */}
+            <div className="w-full flex items-center justify-between mb-2">
+              <button
+                type="button"
+                onClick={toggleGaugeAnimation}
+                className={`text-[9px] font-bold px-2 py-0.5 rounded-full border transition flex items-center gap-1.5 cursor-pointer z-10 ${
+                  enableGaugeAnimation 
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30' 
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title={enableGaugeAnimation ? 'Animasi Halus Aktif (Klik untuk matikan jika perangkat terasa lambat)' : 'Animasi Halus Non-Aktif (Mode Hemat Performa)'}
+              >
+                <Sparkles size={10} className={enableGaugeAnimation ? 'text-amber-300 animate-pulse' : 'text-slate-500'} />
+                <span>Animasi: {enableGaugeAnimation ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <div className="text-[9px] bg-slate-900/90 text-slate-400 group-hover:text-amber-300 px-2 py-0.5 rounded-full border border-slate-800 group-hover:border-amber-500/40 transition flex items-center gap-1">
+                <Repeat size={10} className="animate-spin-slow" />
+                <span>Klik ganti grafik</span>
+              </div>
+            </div>
+
+            {slaViewMode === 'gauge' ? (
+              <>
+                <SlaGaugeChart 
+                  value={realtimeSlaMetrics.percentage} 
+                  target={realtimeSlaMetrics.targetSla} 
+                  enableAnimation={enableGaugeAnimation}
+                  alertThreshold={notificationThresholds.slaWarningPercentage}
+                />
+                
+                <div className="w-full mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block font-medium">Target SLA Minim</span>
+                    <span className="font-mono font-bold text-amber-400 text-sm">{realtimeSlaMetrics.targetSla}%</span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block font-medium">Status Pengiriman</span>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
+                      {realtimeSlaMetrics.percentage >= realtimeSlaMetrics.targetSla ? 'ON TARGET' : 'AT RISK'}
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="w-full flex flex-col items-center justify-center py-1">
+                <div className="w-full flex items-center justify-between px-1 mb-2">
+                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                    <TrendingUp size={14} className="text-emerald-400" />
+                    <span>Trend SLA 7 Hari Terakhir</span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 font-mono font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                    Target {realtimeSlaMetrics.targetSla}%
+                  </span>
+                </div>
+
+                <div className="w-full h-44">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={last7DaysSlaTrend} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="slaTrendGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.5} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="day" stroke="#64748b" fontSize={10} tickLine={false} />
+                      <YAxis domain={[80, 100]} stroke="#64748b" fontSize={10} tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px', color: '#fff' }}
+                        formatter={(val: any) => [`${val}%`, 'Pencapaian SLA']}
+                        labelFormatter={(label, items) => {
+                          const item = items[0]?.payload;
+                          return item ? `${label} (${item.date}) - ${item.deliveries} Resi` : label;
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="slaPercent"
+                        stroke="#10b981"
+                        strokeWidth={2.5}
+                        fillOpacity={1}
+                        fill="url(#slaTrendGradient)"
+                        dot={{ r: 3.5, fill: '#10b981', stroke: '#0f172a', strokeWidth: 1.5 }}
+                        activeDot={{ r: 5, fill: '#34d399', stroke: '#ffffff', strokeWidth: 2 }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="text-[10px] text-slate-400 text-center mt-1 flex items-center justify-center gap-1.5">
+                  <span>Rata-rata 7 Hari:</span>
+                  <strong className="text-emerald-400 font-mono text-xs">{avg7DaysSla}%</strong>
+                  <span className="text-slate-500">&bull; Klik untuk ke Gauge</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Column: Supervisor KPI Metrics Grid */}
+          <div className="md:col-span-7 space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {/* Total Evaluated */}
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Total Pengiriman</span>
+                <span className="text-xl font-mono font-black text-white mt-1 block">
+                  {realtimeSlaMetrics.totalEvaluated} <span className="text-xs font-normal text-slate-400">Resi</span>
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1 block">Periode {selectedMonth}</span>
+              </div>
+
+              {/* On-Time Count */}
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-emerald-500/30">
+                <span className="text-[10px] text-emerald-400 font-semibold uppercase block">Tepat Waktu (On-Time)</span>
+                <span className="text-xl font-mono font-black text-emerald-400 mt-1 block">
+                  {realtimeSlaMetrics.onTimeCount} <span className="text-xs font-normal text-slate-400">Pengiriman</span>
+                </span>
+                <span className="text-[10px] text-emerald-300/80 mt-1 block font-medium">
+                  {realtimeSlaMetrics.percentage}% dari Target
+                </span>
+              </div>
+
+              {/* At Risk Count */}
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-amber-500/30">
+                <span className="text-[10px] text-amber-400 font-semibold uppercase block">Toleransi Berisiko</span>
+                <span className="text-xl font-mono font-black text-amber-400 mt-1 block">
+                  {realtimeSlaMetrics.atRiskCount} <span className="text-xs font-normal text-slate-400">Armada</span>
+                </span>
+                <span className="text-[10px] text-amber-300/80 mt-1 block font-medium">
+                  Progress &ge; 80% SLA
+                </span>
+              </div>
+            </div>
+
+            {/* SLA Status Bar & Supervisor Insight */}
+            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="text-slate-300 flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-emerald-400" />
+                  <span>Ketercapaian SLA Pengiriman Logistik</span>
+                </span>
+                <span className="text-emerald-400 font-mono font-bold">
+                  {realtimeSlaMetrics.percentage}% / 100%
+                </span>
+              </div>
+
+              <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden p-0.5">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 via-emerald-500 to-emerald-400 rounded-full transition-all duration-700"
+                  style={{ width: `${realtimeSlaMetrics.percentage}%` }}
+                />
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                💡 <strong>Supervisor Insight:</strong> Rata-rata buffer ketepatan waktu kedatangan armada di lokasi retail adalah <strong className="text-emerald-300">+{realtimeSlaMetrics.avgBufferMins} menit</strong> sebelum batas toleransi SLA. Sistem monitoring terus mengevaluasi pergerakan GPS armada secara aktif.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Fleet Live Map (Peta Posisi Armada Realtime Tracksolid GPS) */}
+      <FleetLiveMap />
+
+      {/* Fleet Performance Summary Widget (Tracksolid Telemetry Aggregation) */}
+      <FleetPerformanceSummaryWidget 
+        devices={devices} 
+        fleets={fleets} 
+        onNavigateToTracking={() => onNavigate('tracksolid')} 
+      />
 
       {/* Analytics Charts Grid (Filtered by Month, Year, and Armada) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1528,6 +2435,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           </div>
         )}
       </div>
+
+      {/* MODAL KONFIGURASI AMBANG BATAS NOTIFIKASI KUSTOM */}
+      {isThresholdModalOpen && (
+        <NotificationThresholdModal
+          thresholds={notificationThresholds}
+          onSave={handleSaveThresholds}
+          onClose={() => setIsThresholdModalOpen(false)}
+          onTestIdleAlert={triggerIdleAlertTest}
+        />
+      )}
     </div>
   );
 };

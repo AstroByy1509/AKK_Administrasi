@@ -274,30 +274,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
       layerGroup.addLayer(storeMarker);
       bounds.push([lat, lng]);
-
-      // Connect warehouse to store with subtle corridor lines if requested
-      if (showWarehouse) {
-        const polyline = L.polyline([CENTRAL_WAREHOUSE.coordinates, [lat, lng]], {
-          color: isOuterIsland ? '#059669' : '#6366f1',
-          weight: 2,
-          opacity: 0.6,
-          dashArray: '5, 8'
-        });
-        polyline.bindTooltip(`Koridor Suplai Langsung: Banyuwangi DC ➔ ${store.storeName}`, { sticky: true });
-        layerGroup.addLayer(polyline);
-      }
     });
 
-    // 3. Planned polyline (Comprehensive Delivery Loop connecting ALL stores)
-    if (plannedPolyline && plannedPolyline.length > 1) {
-      const plannedLine = L.polyline(plannedPolyline, {
-        color: '#2563eb',
-        weight: 3.5,
-        dashArray: '8, 8',
-        opacity: 0.95
-      }).bindTooltip('Jalur Rute Pengiriman Terpadu (Menghubungkan Seluruh 15 Toko Mitra PT AKK)', { sticky: true });
-      layerGroup.addLayer(plannedLine);
-    }
+    // 3. Planned polyline (Removed)
+    // Planned polyline rendering logic has been removed as per user request.
+
 
     // 4. Actual GPS Tracking Points / Fleet Markers
     if (trackingPoints.length > 0) {

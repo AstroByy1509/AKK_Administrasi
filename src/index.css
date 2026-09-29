@@ -347,6 +347,31 @@ html.light .recharts-default-tooltip * {
   color: #0f172a !important;
 }
 
+/* Force Light Mode for Customer Mapping Container and Map */
+html.light #customer-mapping-container {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+html.light #customer-mapping-container .leaflet-container {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+html.light #customer-mapping-container .leaflet-popup-content-wrapper,
+html.light #customer-mapping-container .leaflet-popup-tip {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+html.light #customer-mapping-container .leaflet-popup-content {
+  color: #0f172a !important;
+}
+html.light #customer-mapping-container .leaflet-popup-content .text-slate-900,
+html.light #customer-mapping-container .leaflet-popup-content .text-slate-800,
+html.light #customer-mapping-container .leaflet-popup-content .text-slate-700,
+html.light #customer-mapping-container .leaflet-popup-content .text-slate-600 {
+  color: #0f172a !important;
+}
+
 /* =========================================================================
    DARK THEME (WARNA GELAP) SUPPORT FOR SALES & WHITE-CARD COMPONENTS
    ========================================================================= */

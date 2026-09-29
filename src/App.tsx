@@ -405,7 +405,7 @@ export default function App() {
         onClose={() => setIsAuthOpen(false)}
         defaultTab={authDefaultTab}
       />
-      <HelpDeskChat />
+      <HelpDeskChat activeTab={currentTab} user={currentUser} />
     </div>
   );
 }

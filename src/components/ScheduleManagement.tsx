@@ -541,79 +541,32 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 self-start lg:self-center flex-wrap">
+          <div className="flex items-center gap-2 self-start lg:self-center flex-wrap">
             <button
               onClick={() => setIsSmartFillOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-700/30 transition cursor-pointer ring-2 ring-emerald-400/40"
-              title="Fitur Smart Fill: Otomatis mengisi rute mingguan berulang (Senin-Sabtu) berdasarkan pola prioritas dengan validasi anti-bentrok H+1"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+              title="Otomatisasi jadwal mingguan"
             >
-              <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
-              <span>⚡ Smart Fill Mingguan</span>
-            </button>
-
-            <button
-              onClick={() => handleRunWeeklyAutoInit(0)}
-              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-800/60 text-xs font-bold shadow-md transition cursor-pointer"
-              title="Penjadwalan cepat: Prioritas rute Luar Kota & seimbangkan rute lokal"
-            >
-              <CalendarCheck className="w-4 h-4 text-emerald-400" />
-              <span>Auto-Jadwal Cepat</span>
-            </button>
-
-            <button
-              onClick={handleRebalanceGaps}
-              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-800/60 text-xs font-bold shadow-md transition cursor-pointer"
-              title="Audit & selesaikan potensi pelanggaran jeda 24 jam dengan rotasi alternatif"
-            >
-              <Repeat className="w-4 h-4 text-purple-400" />
-              <span>Rebalance Jeda 24H</span>
+              <Sparkles className="w-4 h-4 text-emerald-200" />
+              <span>Smart Fill</span>
             </button>
 
             <button
               onClick={() => setIsRouteOptimizerOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
             >
-              <Sparkles className="w-4 h-4 text-indigo-200 animate-pulse" />
-              <span>Optimal Route Planning</span>
-            </button>
-
-            <button
-              onClick={() => setIsCrewPoolOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold shadow-md transition cursor-pointer"
-            >
-              <Users className="w-4 h-4 text-emerald-400" />
-              <span>Data Pool Kru</span>
-            </button>
-
-            <button
-              onClick={() => setIsCrewSimulationOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
-            >
-              <Repeat className="w-4 h-4" />
-              <span>Simulasi Siklus</span>
-            </button>
-
-            <button
-              onClick={() => setActiveMainTab('weekly_planner')}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold shadow-md transition cursor-pointer ${
-                activeMainTab === 'weekly_planner'
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white ring-2 ring-purple-400/50'
-                  : 'bg-purple-950/60 hover:bg-purple-900/60 text-purple-200 border border-purple-700/60'
-              }`}
-              title="Buka Planner Rute Mingguan berdasarkan simulasi dengan fitur drag-and-drop antar kru dan armada"
-            >
-              <Move className="w-4 h-4 text-purple-300" />
-              <span>Planner Rute (Drag & Drop)</span>
+              <Move className="w-4 h-4 text-indigo-200" />
+              <span>Planner Rute</span>
             </button>
 
             <button
               onClick={() => {
                 if (stores.length > 0) handleOpenCreateWithStore(stores[0]);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Buat Manual</span>
+              <span>Jadwal Baru</span>
             </button>
           </div>
         </div>
