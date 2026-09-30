@@ -106,9 +106,11 @@ export interface Schedule {
   fleetId: string;
   fleet?: Fleet;
   crewId: string;
-  crewHelperId?: string;
+  crewHelperId?: string; // Kernet / Helper 1
+  crewHelper2Id?: string; // Kernet / Helper 2 (Tambahan)
   crew?: Crew;
   crewHelper?: Crew;
+  crewHelper2?: Crew;
   status: ShipmentStatus;
   departureDate: string;
   estimatedArrival: string;

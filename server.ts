@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -210,26 +211,53 @@ async function startServer() {
     }
   });
 
-  // Detect production mode
-  const isProduction = process.env.NODE_ENV === "production" || 
-                       (typeof __filename !== "undefined" && (__filename.includes("dist") || __filename.includes("server.cjs")));
+  // In development, always use Vite middleware; in production, serve built dist/
+  const isProduction = process.env.NODE_ENV === "production";
+  const distPath = path.join(process.cwd(), 'dist');
+  const indexHtmlPath = path.join(distPath, 'index.html');
 
-  if (!isProduction) {
+  if (isProduction) {
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+    }
+    app.get('*', (req, res) => {
+      if (fs.existsSync(indexHtmlPath)) {
+        res.sendFile(indexHtmlPath, (err) => {
+          if (err && !res.headersSent) {
+            console.error("Error sending index.html:", err);
+            res.status(500).send("Error loading application");
+          }
+        });
+      } else {
+        res.status(503).send("Aplikasi sedang dibangun. Silakan muat ulang beberapa saat lagi.");
+      }
+    });
+  } else {
+    // In development mode, Vite middleware compiles and serves on-the-fly
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
-  app.listen(Number(process.env.PORT) || PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${Number(process.env.PORT) || PORT}`);
+  const serverPort = Number(process.env.PORT) || 3000;
+  const server = app.listen(serverPort, "0.0.0.0", () => {
+    console.log(`Server running in ${isProduction ? 'production (static dist)' : 'development (vite middleware)'} mode on http://0.0.0.0:${serverPort}`);
+  });
+
+  // Graceful shutdown for Cloud Run container lifecycle
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, closing HTTP server gracefully...');
+    server.close(() => {
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    server.close(() => {
+      process.exit(0);
+    });
   });
 }
 

@@ -5,6 +5,7 @@ import { logisticsStore } from '../services/store';
 import { Schedule, Fleet, RetailStore, Crew, SalesOrder, AdminActivity, LoadingDurationRecord } from '../types';
 import { NavTab } from './Sidebar';
 import { DriverLoadBalancing } from './DriverLoadBalancing';
+import { SlaGaugeWidget } from './SlaGaugeWidget';
 
 interface ExecutiveDashboardProps {
   onNavigate: (tab: NavTab) => void;
@@ -688,6 +689,11 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onNaviga
           </span>
         </div>
 
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 mb-5">
+          <div className="lg:col-span-1">
+            <SlaGaugeWidget onTimePercentage={96} previousPercentage={94.5} />
+          </div>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           {/* Card 1: Armada Beroperasi (Operasional) */}
           <div className="bg-slate-900 border border-blue-500/30 rounded-xl p-3.5 flex flex-col justify-between shadow-xs hover:border-blue-500/50 transition">

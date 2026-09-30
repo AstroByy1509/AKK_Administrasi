@@ -223,23 +223,25 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       const isOuterIsland = store.island !== 'Jawa';
 
       const pinColor = isSelected
-        ? 'bg-blue-600 border-white text-white scale-125 z-50'
+        ? 'bg-blue-600 border-white text-white scale-125 z-50 shadow-xl ring-2 ring-blue-400'
         : isOuterIsland
-        ? 'bg-emerald-600 border-white text-white'
-        : 'bg-indigo-600 border-white text-white';
+        ? 'bg-emerald-500 border-white text-white shadow-md'
+        : 'bg-indigo-600 border-white text-white shadow-md';
 
       const storeIcon = L.divIcon({
         className: 'custom-store-pin',
         html: `
-          <div class="transition-transform duration-200 flex flex-col items-center">
-            <div class="w-8 h-8 rounded-full shadow-lg border-2 flex items-center justify-center font-bold text-xs ${pinColor}">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+          <div class="transition-transform duration-200 flex flex-col items-center group relative cursor-pointer">
+            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center font-bold text-[10px] ${pinColor}">
+              <span class="w-2 h-2 rounded-full bg-white"></span>
             </div>
-            <span class="px-1.5 py-0.5 mt-0.5 bg-slate-900/90 text-[10px] text-slate-100 rounded shadow font-medium whitespace-nowrap">${store.storeCode}</span>
+            <div class="absolute bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] px-2 py-1 rounded shadow-xl whitespace-nowrap z-50 border border-slate-700 pointer-events-none">
+              <strong>${store.storeCode}</strong>: ${store.storeName}
+            </div>
           </div>
         `,
-        iconSize: [32, 48],
-        iconAnchor: [16, 24]
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
       });
 
       const storeMarker = L.marker([lat, lng], { icon: storeIcon })

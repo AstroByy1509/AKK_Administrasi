@@ -12,8 +12,29 @@ interface CustomerMappingProps {
 }
 
 export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForStore }) => {
-  const [stores, setStores] = useState<RetailStore[]>(logisticsStore.getStores());
+  const [stores, setStores] = useState<RetailStore[]>(() => {
+    const s = logisticsStore.getStores();
+    console.log(`[CustomerMapping INITIAL] Loaded ${s.length} stores from database.`);
+    return s;
+  });
   const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
+  
+  // Real-time Fetch & Diagnostic state
+  const [fetchStatus, setFetchStatus] = useState<'idle' | 'fetching' | 'success' | 'error'>('success');
+  const [diagnosticLogs, setDiagnosticLogs] = useState<Array<{ id: string; timestamp: string; message: string; count: number; level: 'info' | 'success' | 'warning' }>>(() => [
+    {
+      id: 'diag-init',
+      timestamp: new Date().toLocaleTimeString(),
+      message: `Inisialisasi CustomerMapping: Terbaca ${logisticsStore.getStores().length} toko dari database (Target: 312 Toko).`,
+      count: logisticsStore.getStores().length,
+      level: logisticsStore.getStores().length >= 312 ? 'success' : 'info'
+    }
+  ]);
+  const [showDiagnosticsDrawer, setShowDiagnosticsDrawer] = useState(false);
+  const [showRawData, setShowRawData] = useState(false);
+  
+  const rawDataPreview = useMemo(() => stores.slice(0, 50), [stores]);
+
   // State to hold selected week for route visualization
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [showRoutes, setShowRoutes] = useState<boolean>(true);
@@ -24,22 +45,60 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
   const [isGoogleSheetsSyncOpen, setIsGoogleSheetsSyncOpen] = useState(false);
 
+  const runDiagnosticSync = async () => {
+    setFetchStatus('fetching');
+    const now = new Date().toLocaleTimeString();
+    console.log(`[CustomerMapping DIAGNOSTIC START] Executing 312-store sync and diagnostic check at ${now}`);
+    
+    setDiagnosticLogs(prev => [
+      { id: 'diag-' + Date.now(), timestamp: now, message: 'Menjalankan diagnostik & pembacaan 312 toko dari database...', count: stores.length, level: 'info' },
+      ...prev
+    ]);
+
+    try {
+      const res = await googleSheetsSyncService.syncNow('Diagnostik Manual CustomerMapping');
+      const freshStores = logisticsStore.getStores();
+      setStores(freshStores);
+      setFetchStatus('success');
+      const timeEnd = new Date().toLocaleTimeString();
+      
+      console.log(`[CustomerMapping DIAGNOSTIC SUCCESS] Database verified. Total stores active in memory: ${freshStores.length}`);
+      setDiagnosticLogs(prev => [
+        { id: 'diag-' + Date.now(), timestamp: timeEnd, message: `Diagnostik Sukses: Terbaca ${freshStores.length} toko retail aktif dari database.`, count: freshStores.length, level: 'success' },
+        ...prev
+      ]);
+    } catch (err: any) {
+      setFetchStatus('error');
+      const timeErr = new Date().toLocaleTimeString();
+      console.error(`[CustomerMapping DIAGNOSTIC ERROR]`, err);
+      setDiagnosticLogs(prev => [
+        { id: 'diag-' + Date.now(), timestamp: timeErr, message: `Diagnostik Error: ${err?.message || 'Gagal sinkronisasi toko'}`, count: stores.length, level: 'warning' },
+        ...prev
+      ]);
+    }
+  };
+
   useEffect(() => {
-    // Auto-sync immediately if store count is not 15 or corrupted dummy stores (e.g., 'Freshman') are detected
     const current = logisticsStore.getStores();
+    console.log(`[CustomerMapping EFFECT] Database store count: ${current.length}`);
+    
     if (
-      current.length !== 15 || 
+      current.length < 312 || 
       current.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore') || s.storeName.startsWith('Toko Retail '))
     ) {
-      googleSheetsSyncService.syncNow('Pemuatan Otomatis Modul Pelanggan');
+      runDiagnosticSync();
     }
 
     const unsubStore = logisticsStore.subscribe(() => {
-      setStores(logisticsStore.getStores());
+      const updated = logisticsStore.getStores();
+      console.log(`[CustomerMapping EVENT] logisticsStore updated. Count: ${updated.length}`);
+      setStores(updated);
     });
     const unsubGsheets = googleSheetsSyncService.subscribe(() => {
       setSyncConfig(googleSheetsSyncService.getConfig());
-      setStores(logisticsStore.getStores());
+      const updated = logisticsStore.getStores();
+      console.log(`[CustomerMapping EVENT] googleSheetsSyncService updated. Count: ${updated.length}`);
+      setStores(updated);
     });
     return () => {
       unsubStore();
@@ -234,6 +293,90 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             <span className="text-[11px] text-slate-500">Jawa Timur (Jl. Argopuro No.60)</span>
           </div>
         </div>
+
+        {/* Real-time Fetch & Diagnostic Status Banner */}
+        <div className="mt-4 bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${fetchStatus === 'success' ? 'bg-emerald-400 animate-pulse' : fetchStatus === 'fetching' ? 'bg-amber-400 animate-spin' : 'bg-rose-400'}`}></div>
+            <div>
+              <div className="font-bold text-white flex items-center gap-2">
+                <span>Status Sinkronisasi Real-Time:</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  stores.length >= 312 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  {stores.length >= 312 ? `🟢 Sempurna (${stores.length}/312 Toko)` : `🟡 Memuat (${stores.length}/312 Toko)`}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Sumber Sheet: <strong className="text-slate-200">{syncConfig.sheetName}</strong> &bull; Terakhir Diperiksa: {new Date().toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={runDiagnosticSync}
+              disabled={fetchStatus === 'fetching'}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${fetchStatus === 'fetching' ? 'animate-spin' : ''}`} />
+              <span>{fetchStatus === 'fetching' ? 'Memindai...' : '🔍 Jalankan Diagnostik 312 Toko'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDiagnosticsDrawer(!showDiagnosticsDrawer)}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer"
+            >
+              {showDiagnosticsDrawer ? 'Sembunyikan Log Diagnostik' : `Lihat Log Diagnostik (${diagnosticLogs.length})`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowRawData(!showRawData)}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer"
+            >
+              {showRawData ? 'Sembunyikan Data Mentah' : 'Lihat Data Mentah (50 Pertama)'}
+            </button>
+          </div>
+        </div>
+
+        {/* Expandable Diagnostic Log Drawer */}
+        {showDiagnosticsDrawer && (
+          <div className="mt-3 bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs font-mono">
+            <div className="flex items-center justify-between text-slate-400 pb-2 border-b border-slate-850">
+              <span className="font-bold uppercase tracking-wider text-[10px] text-emerald-400">Log Diagnostik Sistem (Real-Time Database Watcher)</span>
+              <span>Total Log: {diagnosticLogs.length}</span>
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 text-[11px]">
+              {diagnosticLogs.map(log => (
+                <div key={log.id} className="flex items-start justify-between gap-2 p-1.5 rounded bg-slate-900/80 border border-slate-850">
+                  <div className="flex items-start gap-2">
+                    <span className="text-slate-500 select-none">[{log.timestamp}]</span>
+                    <span className={log.level === 'success' ? 'text-emerald-300 font-semibold' : log.level === 'warning' ? 'text-amber-300 font-semibold' : 'text-slate-300'}>
+                      {log.message}
+                    </span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 shrink-0 font-sans font-bold">
+                    {log.count} toko
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Expandable Raw Data Viewer */}
+        {showRawData && (
+          <div className="mt-3 bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs font-mono max-h-96 overflow-y-auto">
+            <div className="font-bold text-emerald-400 pb-2 border-b border-slate-850">
+              Raw Data Inspection (First 50 Stores)
+            </div>
+            <pre className="text-slate-300 whitespace-pre-wrap">
+              {JSON.stringify(rawDataPreview, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
 
       {/* Main Map & Filter Area */}

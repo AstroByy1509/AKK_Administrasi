@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move } from 'lucide-react';
+import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move, FileSpreadsheet } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Schedule, RetailStore, Fleet, Crew, ShipmentStatus, CrewDeliveryHistory } from '../types';
 import { logisticsStore } from '../services/store';
@@ -16,6 +16,7 @@ import { SmartFillResult } from '../services/scheduleInitializer';
 import { WeeklyRoutePlanner } from './WeeklyRoutePlanner';
 import { AreaRepetitionWarningModal } from './AreaRepetitionWarningModal';
 import { checkConsecutiveWeekConflict, AreaRepetitionConflict } from '../services/areaRotationValidator';
+import { GoogleSheetsAdminScheduleView } from './GoogleSheetsAdminScheduleView';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
@@ -70,7 +71,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [isRouteOptimizerOpen, setIsRouteOptimizerOpen] = useState(false);
   const [isSmartFillOpen, setIsSmartFillOpen] = useState(false);
   const [autoInitMessage, setAutoInitMessage] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner'>('schedules_list');
+  const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner' | 'google_sheets_all'>('schedules_list');
   const [consecutiveConflict, setConsecutiveConflict] = useState<AreaRepetitionConflict | null>(null);
 
   // Helper to extract day of week from schedule
@@ -169,6 +170,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
     fleetId: '',
     crewId: '',
     crewHelperId: '',
+    crewHelper2Id: '',
     status: 'scheduled' as ShipmentStatus,
     departureDate: new Date().toISOString().substring(0, 16),
     estimatedArrival: new Date(Date.now() + 24 * 3600000).toISOString().substring(0, 16),
@@ -223,6 +225,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       fleetId: suitableFleet ? suitableFleet.id : '',
       crewId: suitableCrew ? suitableCrew.id : '',
       crewHelperId: '',
+      crewHelper2Id: '',
       status: 'scheduled',
       departureDate: new Date().toISOString().substring(0, 16),
       estimatedArrival: new Date(Date.now() + (isOuter ? 48 : 16) * 3600000).toISOString().substring(0, 16),
@@ -266,6 +269,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       fleetId: recommended.fleetId,
       crewId: recommended.driverId,
       crewHelperId: recommended.helperId || '',
+      crewHelper2Id: '',
       status: 'scheduled' as ShipmentStatus,
       departureDate: new Date().toISOString().substring(0, 16),
       estimatedArrival: new Date(Date.now() + (isOuter ? 48 : 16) * 3600000).toISOString().substring(0, 16),
@@ -383,11 +387,13 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       
       // Notify crew
       const crew = crews.find(c => c.id === scheduleData.crewId);
-      const helper = crews.find(c => c.id === scheduleData.crewHelperId);
+      const helper1 = crews.find(c => c.id === scheduleData.crewHelperId);
+      const helper2 = crews.find(c => c.id === scheduleData.crewHelper2Id);
       const msg = `Halo, Anda ditugaskan untuk pengiriman baru ke ${selectedStoreObj?.storeName}. Armada: ${selectedFleetObj?.plateNumber}. Berangkat: ${new Date(scheduleData.departureDate).toLocaleString()}`;
       
       if (crew) sendWhatsAppNotification(crew, msg);
-      if (helper) sendWhatsAppNotification(helper, msg);
+      if (helper1) sendWhatsAppNotification(helper1, msg);
+      if (helper2) sendWhatsAppNotification(helper2, msg);
     }
 
     setIsAddScheduleOpen(false);
@@ -422,11 +428,13 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
 
     // Notify crew
     const crew = crews.find(c => c.id === newSchedule.crewId);
-    const helper = crews.find(c => c.id === newSchedule.crewHelperId);
+    const helper1 = crews.find(c => c.id === newSchedule.crewHelperId);
+    const helper2 = crews.find(c => c.id === newSchedule.crewHelper2Id);
     const msg = `Halo, Anda ditugaskan untuk pengiriman baru ke ${selectedStoreObj?.storeName}. Armada: ${selectedFleetObj?.plateNumber}. Berangkat: ${new Date(newSchedule.departureDate).toLocaleString()}`;
     
     if (crew) sendWhatsAppNotification(crew, msg);
-    if (helper) sendWhatsAppNotification(helper, msg);
+    if (helper1) sendWhatsAppNotification(helper1, msg);
+    if (helper2) sendWhatsAppNotification(helper2, msg);
 
     setAreaApprovalModalData(prev => ({ ...prev, isOpen: false }));
     setIsAddScheduleOpen(false);
@@ -543,6 +551,19 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
 
           <div className="flex items-center gap-2 self-start lg:self-center flex-wrap">
             <button
+              onClick={() => setActiveMainTab('google_sheets_all')}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold shadow-md transition cursor-pointer ${
+                activeMainTab === 'google_sheets_all'
+                  ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-300 font-black'
+                  : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+              }`}
+              title="Buka Spreadsheet Google Sheets Sheet ALL"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Google Sheets (ALL)</span>
+            </button>
+
+            <button
               onClick={() => setIsSmartFillOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
               title="Otomatisasi jadwal mingguan"
@@ -571,9 +592,9 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
           </div>
         </div>
 
-        {/* Primary View Switcher: Daftar Jadwal & Matriks vs Planner Rute Mingguan (Drag & Drop) */}
+        {/* Primary View Switcher: Daftar Jadwal & Matriks vs Planner Rute Mingguan (Drag & Drop) vs Google Sheets (ALL) */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-6 pt-6 border-t border-slate-800">
-          <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+          <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800 flex-wrap">
             <button
               onClick={() => setActiveMainTab('schedules_list')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
@@ -605,6 +626,21 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 Simulasi 4 Pekan
               </span>
             </button>
+
+            <button
+              onClick={() => setActiveMainTab('google_sheets_all')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeMainTab === 'google_sheets_all'
+                  ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/40'
+                  : 'text-emerald-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Google Sheets (ALL)</span>
+              <span className="bg-emerald-500/20 text-emerald-200 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
+                Sheet ALL (5 Pekan)
+              </span>
+            </button>
           </div>
 
           <div className="text-xs text-slate-400 flex items-center gap-1.5">
@@ -612,6 +648,11 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               <span className="text-purple-300 font-medium flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                 <span>Geser kartu jadwal untuk rotasi tugas Kru atau Truk</span>
+              </span>
+            ) : activeMainTab === 'google_sheets_all' ? (
+              <span className="text-emerald-300 font-medium flex items-center gap-1">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Live Roster Sheet ALL Januari 2026 & Sinkronisasi Langsung</span>
               </span>
             ) : (
               <span>Pengiriman aktif dari DC Banyuwangi</span>
@@ -891,9 +932,15 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                           <span>Supir: <strong className="text-slate-200">{sch.crew?.name || '-'}</strong></span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <User className="w-3 h-3 text-slate-500" />
-                          <span>Helper: <strong className="text-slate-200">{sch.crewHelper?.name || '-'}</strong></span>
+                          <User className="w-3 h-3 text-blue-400" />
+                          <span>Helper 1: <strong className="text-slate-200">{sch.crewHelper?.name || '-'}</strong></span>
                         </div>
+                        {sch.crewHelper2 && (
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3 h-3 text-purple-400" />
+                            <span>Helper 2: <strong className="text-slate-200">{sch.crewHelper2.name}</strong></span>
+                          </div>
+                        )}
                       </div>
                       {sch.areaApprovalStatus === 'approved' && (
                         <div className="mt-1">
@@ -983,6 +1030,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                             fleetId: sch.fleetId,
                             crewId: sch.crewId,
                             crewHelperId: sch.crewHelperId || '',
+                            crewHelper2Id: sch.crewHelper2Id || '',
                             status: sch.status,
                             departureDate: sch.departureDate ? sch.departureDate.substring(0, 16) : new Date().toISOString().substring(0, 16),
                             estimatedArrival: sch.estimatedArrival ? sch.estimatedArrival.substring(0, 16) : new Date().toISOString().substring(0, 16),
@@ -1030,6 +1078,24 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
         </div>
       </div>
       </>
+      )}
+
+      {activeMainTab === 'weekly_planner' && (
+        <WeeklyRoutePlanner 
+          crews={crews} 
+          fleets={fleets} 
+          stores={stores} 
+        />
+      )}
+
+      {activeMainTab === 'google_sheets_all' && (
+        <GoogleSheetsAdminScheduleView
+          onSyncComplete={(count) => {
+            setSchedules(logisticsStore.getSchedules());
+            setAutoInitMessage(`⚡ Berhasil menyinkronkan ${count} rute pengiriman dari Google Sheets (Sheet ALL) ke Jadwal Operasional Aktif!`);
+          }}
+          onNavigateToSchedules={() => setActiveMainTab('schedules_list')}
+        />
       )}
 
 
@@ -1099,16 +1165,16 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">Alokasi Armada Truk</label>
+                  <label className="text-slate-400 block mb-1">Alokasi Armada Truk *</label>
                   <select
                     required
                     value={newSchedule.fleetId}
                     onChange={(e) => setNewSchedule({ ...newSchedule, fleetId: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-semibold"
                   >
-                    <option value="">-- Pilih Truk --</option>
+                    <option value="">-- Pilih Truk Armada --</option>
                     {fleets.map(fl => (
                       <option key={fl.id} value={fl.id}>
                         {fl.initialCode ? `[${fl.initialCode}] ` : ''}{fl.plateNumber} - {fl.vehicleType} [{fl.status}]
@@ -1116,13 +1182,16 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">Kru Supir Utama</label>
+                  <label className="text-slate-400 block mb-1 font-medium">Kru Supir Utama *</label>
                   <select
                     required
                     value={newSchedule.crewId}
                     onChange={(e) => setNewSchedule({ ...newSchedule, crewId: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-semibold"
                   >
                     <option value="">-- Pilih Supir Utama --</option>
                     {crews.map(cr => (
@@ -1133,40 +1202,53 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                   </select>
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Kru Helper (Opsional)</label>
+                  <label className="text-slate-400 block mb-1">Kru Helper 1 / Kernet (Opsional)</label>
                   <select
                     value={newSchedule.crewHelperId || ''}
                     onChange={(e) => setNewSchedule({ ...newSchedule, crewHelperId: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   >
-                    <option value="">-- Pilih Helper --</option>
-                    {crews.filter(c => c.id !== newSchedule.crewId).map(cr => (
+                    <option value="">-- Pilih Helper 1 --</option>
+                    {crews.filter(c => c.id !== newSchedule.crewId && c.id !== newSchedule.crewHelper2Id).map(cr => (
                       <option key={cr.id} value={cr.id}>
                         {cr.name} [{cr.status}]
                       </option>
                     ))}
                   </select>
                 </div>
-                {/* Area frequency & approval alert preview */}
-                <div className="col-span-2">
-                  {areaCheck && areaCheck.requiresApproval && (
-                    <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <div>
-                        <div className="font-bold">Batas Pengiriman Wilayah Tercapai ({areaCheck.tripCount}x Kirim)</div>
-                        <div className="text-[11px] text-slate-300 mt-0.5">
-                          Supir <strong className="text-white">{selectedCrewObj?.name}</strong> telah mengirim {areaCheck.tripCount} kali ke wilayah <strong className="text-white">{currentAreaName}</strong>.
-                          {areaCheck.isApproved ? (
-                            <span className="text-emerald-400 font-semibold block mt-0.5">✓ Otorisasi dispensasi rotasi wilayah telah disetujui.</span>
-                          ) : (
-                            <span className="text-amber-400 font-semibold block mt-0.5">Pop-up persetujuan otorisasi khusus akan otomatis muncul saat Anda mengklik "Rilis Jadwal".</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  <label className="text-slate-400 block mb-1">Kru Helper 2 / Kernet Tambahan (Opsional)</label>
+                  <select
+                    value={newSchedule.crewHelper2Id || ''}
+                    onChange={(e) => setNewSchedule({ ...newSchedule, crewHelper2Id: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
+                  >
+                    <option value="">-- Pilih Helper 2 (Tambahan) --</option>
+                    {crews.filter(c => c.id !== newSchedule.crewId && c.id !== newSchedule.crewHelperId).map(cr => (
+                      <option key={cr.id} value={cr.id}>
+                        {cr.name} [{cr.status}]
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
+              {/* Area frequency & approval alert preview */}
+              {areaCheck && areaCheck.requiresApproval && (
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold">Batas Pengiriman Wilayah Tercapai ({areaCheck.tripCount}x Kirim)</div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">
+                      Supir <strong className="text-white">{selectedCrewObj?.name}</strong> telah mengirim {areaCheck.tripCount} kali ke wilayah <strong className="text-white">{currentAreaName}</strong>.
+                      {areaCheck.isApproved ? (
+                        <span className="text-emerald-400 font-semibold block mt-0.5">✓ Otorisasi dispensasi rotasi wilayah telah disetujui.</span>
+                      ) : (
+                        <span className="text-amber-400 font-semibold block mt-0.5">Pop-up persetujuan otorisasi khusus akan otomatis muncul saat Anda mengklik "Rilis Jadwal".</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Inter-island logistics configuration */}
               <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-3">
@@ -1291,12 +1373,15 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 </div>
 
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">ARMADA, DRIVER & HELPER:</span>
+                  <span className="text-[10px] font-bold uppercase text-slate-500">ARMADA, DRIVER &amp; HELPER (KERNET):</span>
                   <div className="font-bold text-slate-900 text-sm mt-1 font-mono">{selectedManifest.fleet?.plateNumber}</div>
                   <div className="text-slate-600 mt-0.5">Tipe: {selectedManifest.fleet?.vehicleType}</div>
-                  <div className="text-slate-600 mt-0.5">Driver: {selectedManifest.crew?.name} ({selectedManifest.crew?.licenseType})</div>
-                  <div className="text-slate-600 mt-0.5">Helper: {selectedManifest.crewHelper?.name || '-'}</div>
-                  <div className="text-slate-600 mt-0.5">Telp: {selectedManifest.crew?.phone}</div>
+                  <div className="text-slate-600 mt-0.5">Driver: <strong>{selectedManifest.crew?.name}</strong> ({selectedManifest.crew?.licenseType})</div>
+                  <div className="text-slate-600 mt-0.5">Helper 1: <strong>{selectedManifest.crewHelper?.name || '-'}</strong></div>
+                  {selectedManifest.crewHelper2 && (
+                    <div className="text-slate-600 mt-0.5">Helper 2: <strong>{selectedManifest.crewHelper2.name}</strong></div>
+                  )}
+                  <div className="text-slate-600 mt-0.5">Telp Driver: {selectedManifest.crew?.phone}</div>
                 </div>
               </div>
 
@@ -1339,7 +1424,11 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 <div>
                   <div>Dibawa Oleh (Driver / Helper):</div>
                   <div className="h-12 border-b border-slate-300 mt-1"></div>
-                  <div className="font-bold text-slate-800 mt-1">{selectedManifest.crew?.name || 'Driver'} / {selectedManifest.crewHelper?.name || '-'}</div>
+                  <div className="font-bold text-slate-800 mt-1">
+                    {selectedManifest.crew?.name || 'Driver'} 
+                    {selectedManifest.crewHelper ? ` / ${selectedManifest.crewHelper.name}` : ''}
+                    {selectedManifest.crewHelper2 ? ` / ${selectedManifest.crewHelper2.name}` : ''}
+                  </div>
                 </div>
               </div>
             </div>

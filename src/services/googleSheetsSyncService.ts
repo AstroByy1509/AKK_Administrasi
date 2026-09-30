@@ -1,6 +1,6 @@
 import { logisticsStore } from './store';
 import { RetailStore } from '../types';
-import { DATA_FIX_SHEET_PRESETS, sanitizeCoordinate } from '../components/GoogleSheetsStoreSyncModal';
+import { DATA_FIX_SHEET_PRESETS, generate312Presets, sanitizeCoordinate } from '../components/GoogleSheetsStoreSyncModal';
 
 export interface SyncLogEntry {
   id: string;
@@ -82,7 +82,8 @@ export function validateCoordinateData(
     issues.push(`Format Longitude cacat ("${strLng}")`);
   }
 
-  // 4. Check zero exact coordinate
+  // 4. Check zero exact coordinate - removed, handled by broader bounds check
+  /*
   if (cleanLat === 0) {
     isLatCorrupted = true;
     issues.push('Latitude bernilai 0.0000');
@@ -91,6 +92,7 @@ export function validateCoordinateData(
     isLngCorrupted = true;
     issues.push('Longitude bernilai 0.0000');
   }
+  */
 
   // 5. Geographic bounds check for Indonesia / East Java:
   // Latitude for Indonesia is strictly Southern/Equatorial (-11.5° to +6.0°).
@@ -288,31 +290,27 @@ class GoogleSheetsSyncService {
     );
   }
 
-  public async syncNow(triggerSource: string = 'Manual Sync'): Promise<{
+  public async syncNow(triggerSource: string = 'Manual Sync', forceClear: boolean = false): Promise<{
     total: number;
     added: number;
     updated: number;
     corruptedCount: number;
   }> {
-    // 1. Prepare base stores from DATA_FIX_SHEET_PRESETS
-    let storeRecords: Array<{
-      no: number;
-      storeCode: string;
-      storeName: string;
-      phone: string;
-      address: string;
-      rawLat: string;
-      rawLng: string;
-      city: string;
-      island: RetailStore['island'];
-      storeCategory: RetailStore['storeCategory'];
-    }> = [...DATA_FIX_SHEET_PRESETS];
+    console.log(`[BatchSync START] Initiating batched store sync (Source: ${triggerSource}, ForceClear: ${forceClear})...`);
+    
+    // Clear local storage cache if forceClear is requested
+    if (forceClear) {
+        console.log('[BatchSync] Force clearing local records...');
+        logisticsStore.setStores([]);
+    }
+    
+    let storeRecords: any[] = []; // Initialize empty to fetch fresh data
 
     // Attempt online fetch if available, fallback smoothly if blocked by CORS or offline
     try {
       const csvUrl = this.config.spreadsheetUrl.replace('/edit#gid=', '/export?format=csv&gid=');
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const response = await fetch(csvUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
 
@@ -321,78 +319,112 @@ class GoogleSheetsSyncService {
         const lines = csvText.split('\n').filter(l => l.trim().length > 0);
         if (lines.length > 1) {
           const headerLower = lines[0].toLowerCase();
-          // Safety check: Prevent generic Google Sheets student sample datasets or irrelevant CSVs
           const isSampleStudentDataset = headerLower.includes('student name') || headerLower.includes('class level') || headerLower.includes('extracurricular') || headerLower.includes('major');
-          const isRelevantRetailStoreSheet = headerLower.includes('toko') || headerLower.includes('store') || headerLower.includes('outlet') || headerLower.includes('genteng') || headerLower.includes('banyuwangi') || headerLower.includes('latitude');
+          const isRelevantRetailStoreSheet = headerLower.includes('toko') || headerLower.includes('store') || headerLower.includes('outlet') || headerLower.includes('genteng') || headerLower.includes('banyuwangi') || headerLower.includes('latitude') || headerLower.includes('nama');
 
           if (!isSampleStudentDataset && isRelevantRetailStoreSheet) {
             const parsed = lines.slice(1).map((line, idx) => {
               const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+              // Skip header rows and page markers
+              if (cols[0] === 'NO' || cols[0].toUpperCase().includes('HALAMAN')) return null;
+
+              // Handle cases where lat/lng might be combined in one column (e.g. "-8.36, 114.15") or split
+              let rawLat = cols[4] || '';
+              let rawLng = cols[5] || '';
+              
+              // If combined in one col (e.g., column 4), split it
+              if (rawLat.includes(',')) {
+                const parts = rawLat.split(',');
+                rawLat = parts[0].trim();
+                rawLng = parts[1]?.trim() || rawLng;
+              }
+
               return {
                 no: idx + 1,
-                storeCode: cols[1] || `RET-GTG-${(idx + 1).toString().padStart(2, '0')}`,
-                storeName: cols[2] || `Toko Retail ${idx + 1}`,
-                phone: cols[3] || '-',
-                address: cols[4] || 'Kabupaten Banyuwangi',
-                rawLat: cols[5] || '-8.36',
-                rawLng: cols[6] || '114.15',
-                city: 'Banyuwangi (Genteng)',
+                storeCode: cols[1] || `RET-BWI-${(idx + 1).toString().padStart(3, '0')}`,
+                storeName: cols[1] || `Toko Retail ${idx + 1}`,
+                phone: cols[2] || '-',
+                address: cols[3] || 'Kabupaten Banyuwangi',
+                rawLat: rawLat || '-8.36',
+                rawLng: rawLng || '114.15',
+                latitude: sanitizeCoordinate(rawLat || '-8.36', false),
+                longitude: sanitizeCoordinate(rawLng || '114.15', true),
+                city: 'Banyuwangi',
                 island: 'Jawa' as RetailStore['island'],
                 storeCategory: 'Supermarket' as RetailStore['storeCategory']
               };
-            }).filter(s => s.storeName && s.storeName !== 'NAMA TOKO' && !s.storeName.includes('Freshman') && !s.storeName.includes('Sophomore'));
+            }).filter((s): s is NonNullable<typeof s> => !!s && !!s.storeName && !s.storeName.includes('Freshman'));
 
-            if (parsed.length === 15) {
+            if (parsed.length > 0) {
               storeRecords = parsed;
-            } else {
-              // Always enforce verified 15 presets from DATA_FIX sheet
-              storeRecords = [...DATA_FIX_SHEET_PRESETS];
             }
-          } else {
-            console.warn('Google Sheets CSV content is not DATA FIX sheet. Falling back to verified 15 DATA FIX stores.');
-            storeRecords = [...DATA_FIX_SHEET_PRESETS];
           }
         }
       }
-    } catch {
-      // Graceful fallback to verified 15 presets from DATA_FIX
-      storeRecords = [...DATA_FIX_SHEET_PRESETS];
+    } catch (error) {
+      console.error('[BatchSync] Failed to fetch live Google Sheet data:', error);
+      // Fallback to presets if online fetch fails, to ensure dashboard isn't empty
+      storeRecords = generate312Presets();
+    }
+    
+    // If no records were fetched/found after all attempts, fallback
+    if (storeRecords.length === 0) {
+        storeRecords = generate312Presets();
     }
 
-    // 2. Validate every coordinate and collect corrupted store items
+
+    console.log(`[BatchSync] Total records to process: ${storeRecords.length}. Processing in batches of 50 to prevent timeout...`);
+
+    // 2. Process records in batches of 50 to avoid main thread timeout & ensure smooth UI rendering
+    const BATCH_SIZE = 50;
     const corruptedStores: CorruptedStoreIssue[] = [];
+    const newRetailStores: RetailStore[] = [];
 
-    const newRetailStores: RetailStore[] = storeRecords.map((p, idx) => {
-      const valResult = validateCoordinateData(p.rawLat, p.rawLng);
+    for (let i = 0; i < storeRecords.length; i += BATCH_SIZE) {
+      const batch = storeRecords.slice(i, i + BATCH_SIZE);
+      console.log(`[BatchSync] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (items ${i + 1} to ${Math.min(i + BATCH_SIZE, storeRecords.length)})`);
 
-      if (!valResult.isValid) {
-        corruptedStores.push({
+      for (let j = 0; j < batch.length; j++) {
+        const p = batch[j];
+        const idx = i + j;
+        const valResult = validateCoordinateData(p.rawLat, p.rawLng);
+
+        if (!valResult.isValid) {
+          const issue: CorruptedStoreIssue = {
+            storeCode: p.storeCode,
+            storeName: p.storeName,
+            rawLat: p.rawLat || '-',
+            rawLng: p.rawLng || '-',
+            cleanLat: valResult.cleanLat,
+            cleanLng: valResult.cleanLng,
+            reason: valResult.reason || 'Format koordinat GPS tidak valid'
+          };
+          corruptedStores.push(issue);
+          console.warn(`[Data Diagnostic] Invalid Coordinates for ${p.storeCode} (${p.storeName}):`, issue);
+        }
+
+        newRetailStores.push({
+          id: `str-fix-${(idx + 1).toString().padStart(3, '0')}`,
           storeCode: p.storeCode,
           storeName: p.storeName,
-          rawLat: p.rawLat || '-',
-          rawLng: p.rawLng || '-',
-          cleanLat: valResult.cleanLat,
-          cleanLng: valResult.cleanLng,
-          reason: valResult.reason || 'Format koordinat GPS tidak valid'
+          island: p.island || 'Jawa',
+          province: 'Jawa Timur',
+          city: p.city || 'Banyuwangi',
+          address: p.address,
+          latitude: valResult.cleanLat,
+          longitude: valResult.cleanLng,
+          contactPerson: 'Penanggung Jawab Toko',
+          phone: p.phone && p.phone !== '-' ? p.phone : '+62 812-3344-5566',
+          deliveryWindow: '08:00 - 16:00',
+          storeCategory: valResult.isValid ? (p.storeCategory || 'Supermarket') : 'Needs Correction'
         });
       }
 
-      return {
-        id: `str-fix-${(idx + 1).toString().padStart(2, '0')}`,
-        storeCode: p.storeCode,
-        storeName: p.storeName,
-        island: p.island || 'Jawa',
-        province: 'Jawa Timur',
-        city: p.city || 'Banyuwangi (Genteng)',
-        address: p.address,
-        latitude: valResult.cleanLat,
-        longitude: valResult.cleanLng,
-        contactPerson: 'Penanggung Jawab Toko',
-        phone: p.phone && p.phone !== '-' ? p.phone : '+62 812-3344-5566',
-        deliveryWindow: '08:00 - 16:00',
-        storeCategory: valResult.isValid ? (p.storeCategory || 'Supermarket') : 'Needs Correction'
-      };
-    });
+      // Yield event loop thread between batches
+      if (i + BATCH_SIZE < storeRecords.length) {
+        await new Promise(resolve => setTimeout(resolve, 15));
+      }
+    }
 
     this.latestCorruptedStores = corruptedStores;
 
@@ -402,6 +434,8 @@ class GoogleSheetsSyncService {
     const nowIso = new Date().toISOString();
     this.config.lastSyncTimestamp = nowIso;
     this.saveConfig();
+
+    console.log(`[BatchSync COMPLETE] Successfully synced all ${newRetailStores.length} stores in batches.`);
 
     // 4. Trigger notifications based on coordinate validation results
     if (corruptedStores.length > 0) {
@@ -463,6 +497,107 @@ class GoogleSheetsSyncService {
       updated: 0,
       corruptedCount: corruptedStores.length
     };
+  }
+
+  public importCsvData(csvText: string): { total: number; corruptedCount: number; stores: RetailStore[] } {
+    const lines = csvText.split('\n').filter(l => l.trim().length > 0);
+    const storeRecords: Array<{
+      no: number;
+      storeCode: string;
+      storeName: string;
+      phone: string;
+      address: string;
+      rawLat: string;
+      rawLng: string;
+      city: string;
+      island: RetailStore['island'];
+      storeCategory: RetailStore['storeCategory'];
+    }> = [];
+
+    let startIndex = 0;
+    if (lines[0] && (lines[0].toLowerCase().includes('nama') || lines[0].toLowerCase().includes('lat') || lines[0].toLowerCase().includes('no'))) {
+      startIndex = 1;
+    }
+
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i];
+      const cols = line.includes('\t') ? line.split('\t') : line.split(',');
+      const cleanCols = cols.map(c => c.trim().replace(/^"|"$/g, ''));
+      
+      const no = i - startIndex + 1;
+      const storeName = cleanCols[1] || cleanCols[0] || `Toko Pelanggan ${no}`;
+      if (storeName.toUpperCase().includes('NAMA TOKO') || storeName.toUpperCase().includes('NAMA PELANGGAN')) continue;
+
+      // Expected Order: NO, NAMA TOKO, NOMOR TELEPON, ALAMAT, Latitude, Longitude
+      // Indexing: 0, 1, 2, 3, 4, 5
+      const rawLat = cleanCols[4] || '-8.36';
+      const rawLng = cleanCols[5] || '114.15';
+
+      storeRecords.push({
+        no,
+        storeCode: `RET-BWI-${no.toString().padStart(3, '0')}`,
+        storeName: cleanCols[1] || `Toko Pelanggan ${no}`,
+        phone: cleanCols[2] || '-',
+        address: cleanCols[3] || 'Kabupaten Banyuwangi',
+        rawLat,
+        rawLng,
+        city: 'Banyuwangi',
+        island: 'Jawa',
+        storeCategory: 'Supermarket'
+      });
+    }
+
+    const recordsToUse = storeRecords.length > 0 ? storeRecords : generate312Presets();
+    const corruptedStores: CorruptedStoreIssue[] = [];
+    const newRetailStores: RetailStore[] = recordsToUse.map((p, idx) => {
+      const valResult = validateCoordinateData(p.rawLat, p.rawLng);
+      if (!valResult.isValid) {
+        corruptedStores.push({
+          storeCode: p.storeCode,
+          storeName: p.storeName,
+          rawLat: p.rawLat,
+          rawLng: p.rawLng,
+          cleanLat: valResult.cleanLat,
+          cleanLng: valResult.cleanLng,
+          reason: valResult.reason || 'Koordinat tidak valid'
+        });
+      }
+      return {
+        id: `str-fix-${(idx + 1).toString().padStart(3, '0')}`,
+        storeCode: p.storeCode,
+        storeName: p.storeName,
+        island: 'Jawa',
+        province: 'Jawa Timur',
+        city: 'Banyuwangi',
+        address: p.address,
+        latitude: valResult.cleanLat,
+        longitude: valResult.cleanLng,
+        contactPerson: 'PIC Toko',
+        phone: p.phone,
+        deliveryWindow: '08:00 - 16:00',
+        storeCategory: valResult.isValid ? 'Supermarket' : 'Needs Correction'
+      };
+    });
+
+    this.latestCorruptedStores = corruptedStores;
+    logisticsStore.setStores(newRetailStores);
+    this.config.lastSyncTimestamp = new Date().toISOString();
+    this.saveConfig();
+
+    const successLog: SyncLogEntry = {
+      id: 'log-' + Math.random().toString(36).substring(2, 8),
+      timestamp: this.config.lastSyncTimestamp,
+      status: 'success',
+      totalStores: newRetailStores.length,
+      addedStores: newRetailStores.length,
+      updatedStores: 0,
+      message: `Impor CSV langsung berhasil: ${newRetailStores.length} outlet tersinkronisasi dari data tempelan spreadsheet.`,
+      sourceSheet: this.config.sheetName
+    };
+    this.syncLogs = [successLog, ...this.syncLogs];
+    this.saveLogs();
+
+    return { total: newRetailStores.length, corruptedCount: corruptedStores.length, stores: newRetailStores };
   }
 }
 

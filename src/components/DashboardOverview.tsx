@@ -46,6 +46,7 @@ import { DeliveryHeatmap } from './DeliveryHeatmap';
 import { RouteSlaDeviationSummary } from './RouteSlaDeviationSummary';
 import { FleetPerformanceSummaryWidget } from './FleetPerformanceSummaryWidget';
 import { FleetLiveMap } from './FleetLiveMap';
+import { WeeklyIdleReportWidget } from './WeeklyIdleReportWidget';
 import { Schedule, Fleet, RetailStore, Crew, TracksolidDevice } from '../types';
 import { logisticsStore } from '../services/store';
 import { NavTab } from './Sidebar';
@@ -1855,6 +1856,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
         devices={devices} 
         fleets={fleets} 
         onNavigateToTracking={() => onNavigate('tracksolid')} 
+      />
+
+      {/* Weekly Idle Report Summary Widget (7-Day Idle Telemetry Audit) */}
+      <WeeklyIdleReportWidget 
+        devices={devices} 
+        fleets={fleets} 
       />
 
       {/* Analytics Charts Grid (Filtered by Month, Year, and Armada) */}

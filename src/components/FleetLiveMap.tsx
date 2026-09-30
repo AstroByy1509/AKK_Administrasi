@@ -24,7 +24,13 @@ import {
   RefreshCw,
   Flame,
   AlertTriangle,
-  Fuel
+  Fuel,
+  Bell,
+  ShieldAlert,
+  Phone,
+  MessageSquare,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 import { TracksolidDevice, Fleet, Schedule, RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
@@ -45,13 +51,59 @@ export interface IdleHotspot24h {
   locationName: string;
   latitude: number;
   longitude: number;
-  totalIdleHours: number; // In hours (e.g. 4.5)
+  totalIdleHours: number;
   idleMinutes: number;
   fleetsInvolvedCount: number;
   fleetPlates: string[];
   primaryReason: 'Ferry Queue / Port' | 'Warehouse Loading / Staging' | 'Driver Rest / Meals' | 'Retail Unloading Queue' | 'Traffic / Red Light Stop';
-  severity: 'high' | 'medium' | 'low'; // High > 3h, Medium 1-3h, Low < 1h
-  estimatedFuelWastedLiters: number; // ~1.5L per hour idle
+  severity: 'high' | 'medium' | 'low';
+  estimatedFuelWastedLiters: number;
+}
+
+// Model for Idle/OFF > 60 Mins Outside Central Warehouse Alert
+export interface IdleOutsideDCAlert {
+  device: TracksolidDevice;
+  distanceKmFromDC: number;
+  idleMinutes: number;
+  locationAddress: string;
+  driverName: string;
+}
+
+// Calculate distance in km from Central Warehouse Sukowidi DC
+export function getDistanceFromCentralDC(lat: number, lng: number): number {
+  const dcLat = CENTRAL_WAREHOUSE.coordinates[0];
+  const dcLng = CENTRAL_WAREHOUSE.coordinates[1];
+  const R = 6371; // Earth radius in km
+  const dLat = (lat - dcLat) * (Math.PI / 180);
+  const dLng = (lng - dcLng) * (Math.PI / 180);
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(dcLat * (Math.PI / 180)) * 
+    Math.cos(lat * (Math.PI / 180)) * 
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c).toFixed(2));
+}
+
+// Convert stopDuration string or device status to estimated idle minutes
+export function parseStopDurationMinutes(stopDuration?: string, status?: string, speed?: number): number {
+  if (speed && speed > 0) return 0;
+  if (!stopDuration) {
+    if (status === 'Sleeping') return 65; // Default sleeping assumption >60m
+    return 0;
+  }
+  const clean = stopDuration.toLowerCase().trim();
+  if (clean.includes('hr') || clean.includes('jam')) {
+    const matched = clean.match(/\d+/);
+    if (matched) return parseInt(matched[0], 10) * 60;
+    return 60; // fallback "1hr+"
+  }
+  if (clean.includes('m') || clean.includes('mnt') || clean.includes('min')) {
+    const matched = clean.match(/\d+/);
+    if (matched) return parseInt(matched[0], 10);
+  }
+  if (status === 'Sleeping') return 65;
+  return 0;
 }
 
 // Default 24h Idle Hotspot Clusters across Key Transit Routes
@@ -155,7 +207,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
 
   const [selectedDevice, setSelectedDevice] = useState<TracksolidDevice | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'moving' | 'sleeping' | 'offline'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'moving' | 'sleeping' | 'alert_idle_outside_dc'>('all');
   const [tileProvider, setTileProvider] = useState<MapTileProvider>('dark');
   const [isSimulatingLive, setIsSimulatingLive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -164,6 +216,11 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
   // 🔥 Visual Heatmap Toggle for 24h Vehicle Idling Occurrences
   const [showIdleHeatmap, setShowIdleHeatmap] = useState<boolean>(true);
   const [selectedHotspot, setSelectedHotspot] = useState<IdleHotspot24h | null>(null);
+
+  // 🚨 Idle >60m Outside Central Warehouse Warning Modal & Toast Notifications State
+  const [showWarningModal, setShowWarningModal] = useState<boolean>(false);
+  const [approvedAlertImeis, setApprovedAlertImeis] = useState<string[]>([]);
+  const [dismissedToastImeis, setDismissedToastImeis] = useState<string[]>([]);
 
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
 
@@ -178,11 +235,41 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // Compute dynamic 24h idle hotspots (combining static cluster data + sleeping devices)
+  // Compute 🚨 Idle/OFF > 60 Minutes Outside Central Warehouse Alerts
+  const idleOutsideDCAlerts: IdleOutsideDCAlert[] = useMemo(() => {
+    const alerts: IdleOutsideDCAlert[] = [];
+
+    devices.forEach(dev => {
+      if (!dev.latitude || !dev.longitude) return;
+
+      const idleMins = parseStopDurationMinutes(dev.stopDuration, dev.status, dev.currentSpeedKmh);
+      const distFromDC = getDistanceFromCentralDC(dev.latitude, dev.longitude);
+      const isIdleOrOff = dev.status === 'Sleeping' || dev.accStatus === 'OFF' || dev.currentSpeedKmh === 0;
+
+      // RULE: Idle or OFF >= 60 minutes AND Distance from Gudang Pusat > 1.5 KM
+      if (isIdleOrOff && idleMins >= 60 && distFromDC > 1.5) {
+        alerts.push({
+          device: dev,
+          distanceKmFromDC: distFromDC,
+          idleMinutes: idleMins,
+          locationAddress: dev.address || `Koordinat (${dev.latitude}, ${dev.longitude})`,
+          driverName: dev.driverName
+        });
+      }
+    });
+
+    return alerts;
+  }, [devices]);
+
+  // Active Toast Alerts Queue (filtered out dismissed ones)
+  const activeToastAlerts = useMemo(() => {
+    return idleOutsideDCAlerts.filter(a => !dismissedToastImeis.includes(a.device.imei));
+  }, [idleOutsideDCAlerts, dismissedToastImeis]);
+
+  // Compute dynamic 24h idle hotspots
   const idleHotspots24h: IdleHotspot24h[] = useMemo(() => {
     const dynamicHotspots: IdleHotspot24h[] = [...INITIAL_IDLE_HOTSPOTS_24H];
 
-    // Append sleeping/idle devices as dynamic hotspots
     devices.forEach(dev => {
       if (dev.status === 'Sleeping' && dev.latitude && dev.longitude) {
         const existing = dynamicHotspots.find(
@@ -244,13 +331,13 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
         matchStatus = dev.currentSpeedKmh > 0 || dev.accStatus === 'ON';
       } else if (statusFilter === 'sleeping') {
         matchStatus = dev.status === 'Sleeping' || (dev.currentSpeedKmh === 0 && dev.accStatus === 'OFF');
-      } else if (statusFilter === 'offline') {
-        matchStatus = dev.status === 'Offline';
+      } else if (statusFilter === 'alert_idle_outside_dc') {
+        matchStatus = idleOutsideDCAlerts.some(a => a.device.imei === dev.imei);
       }
 
       return matchSearch && matchStatus;
     });
-  }, [devices, searchQuery, statusFilter]);
+  }, [devices, searchQuery, statusFilter, idleOutsideDCAlerts]);
 
   // Handle parent-selected IMEI
   useEffect(() => {
@@ -365,7 +452,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
     tileLayerRef.current = newTileLayer;
   }, [tileProvider]);
 
-  // Render Map Markers (Fleets, Central Hub, Stores, & 🔥 24h Idling Heatmap Circles)
+  // Render Map Markers
   useEffect(() => {
     if (!mapInstanceRef.current || !layerGroupRef.current) return;
 
@@ -375,21 +462,20 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
     // 1. 🔥 Overlay 24-Hour Idling Occurrences Heatmap Circles
     if (showIdleHeatmap) {
       idleHotspots24h.forEach(hotspot => {
-        let circleColor = '#ef4444'; // Red for High (> 3h)
+        let circleColor = '#ef4444';
         let fillColor = '#f87171';
         let radiusMeters = 3500;
 
         if (hotspot.severity === 'medium') {
-          circleColor = '#f59e0b'; // Amber for Medium (1-3h)
+          circleColor = '#f59e0b';
           fillColor = '#fbbf24';
           radiusMeters = 2500;
         } else if (hotspot.severity === 'low') {
-          circleColor = '#eab308'; // Yellow for Low (< 1h)
+          circleColor = '#eab308';
           fillColor = '#fde047';
           radiusMeters = 1800;
         }
 
-        // Inner solid glow circle
         const heatCircle = L.circle([hotspot.latitude, hotspot.longitude], {
           radius: radiusMeters,
           color: circleColor,
@@ -399,7 +485,6 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           fillOpacity: 0.25
         });
 
-        // Pulsing HTML Div Marker at hotspot center
         const heatMarkerIcon = L.divIcon({
           className: 'custom-heat-marker',
           html: `
@@ -423,7 +508,6 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           setSelectedHotspot(hotspot);
         });
 
-        // Bind popup to Heatmap Circle
         const popupContent = `
           <div class="p-3 text-xs text-slate-100 font-sans max-w-xs space-y-2">
             <div class="flex items-center justify-between border-b border-slate-700 pb-1.5">
@@ -541,11 +625,22 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
       const isSleeping = dev.status === 'Sleeping';
       const isOffline = dev.status === 'Offline';
 
+      const idleMins = parseStopDurationMinutes(dev.stopDuration, dev.status, dev.currentSpeedKmh);
+      const distFromDC = getDistanceFromCentralDC(dev.latitude, dev.longitude);
+      const isIdleOrOff = isSleeping || dev.accStatus === 'OFF' || dev.currentSpeedKmh === 0;
+
+      // CRITICAL RULE: Idle or OFF >= 60 mins AND Outside Gudang Pusat (> 1.5 km)
+      const isWarningIdleOutsideDC = isIdleOrOff && idleMins >= 60 && distFromDC > 1.5;
+
       let statusBgClass = 'bg-emerald-500';
       let borderClass = 'border-emerald-400';
       let badgeBg = 'bg-emerald-950/90 text-emerald-300 border-emerald-500/50';
 
-      if (isSleeping) {
+      if (isWarningIdleOutsideDC) {
+        statusBgClass = 'bg-rose-600 animate-pulse';
+        borderClass = 'border-rose-500 ring-4 ring-rose-500/40';
+        badgeBg = 'bg-rose-950 text-rose-200 border-rose-500 shadow-rose-500/20 animate-bounce';
+      } else if (isSleeping) {
         statusBgClass = 'bg-amber-500';
         borderClass = 'border-amber-400';
         badgeBg = 'bg-amber-950/90 text-amber-300 border-amber-500/50';
@@ -561,21 +656,20 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
         className: 'custom-fleet-marker',
         html: `
           <div class="relative flex flex-col items-center justify-center cursor-pointer group ${isSelected ? 'scale-110 z-30' : 'z-20'}">
-            ${isMoving ? `<div class="absolute -inset-2 rounded-full ${statusBgClass}/30 animate-ping"></div>` : ''}
+            ${isWarningIdleOutsideDC ? `<div class="absolute -inset-3 rounded-full bg-rose-600/40 animate-ping"></div>` : isMoving ? `<div class="absolute -inset-2 rounded-full ${statusBgClass}/30 animate-ping"></div>` : ''}
             
-            <div class="mb-1 ${badgeBg} px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border shadow-md flex items-center gap-1">
-              <span>${dev.vehiclePlate}</span>
-              ${isMoving ? `<span class="text-amber-300 font-extrabold ml-0.5">${dev.currentSpeedKmh}km/h</span>` : ''}
+            <div class="mb-1 ${badgeBg} px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border shadow-md flex items-center gap-1 whitespace-nowrap">
+              ${isWarningIdleOutsideDC ? `<span class="text-rose-300 font-black">🚨 IDLE ${idleMins}m (${distFromDC}km dari DC)</span>` : `<span>${dev.vehiclePlate}</span>${isMoving ? `<span class="text-amber-300 font-extrabold ml-0.5">${dev.currentSpeedKmh}km/h</span>` : ''}`}
             </div>
 
             <div class="w-8 h-8 rounded-full bg-slate-900 ${borderClass} border-2 text-white flex items-center justify-center shadow-lg font-bold text-xs relative">
-              <span className="text-sm">🚚</span>
+              <span className="text-sm">${isWarningIdleOutsideDC ? '⚠️' : '🚚'}</span>
               <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${statusBgClass} border border-slate-900"></span>
             </div>
           </div>
         `,
-        iconSize: [70, 50],
-        iconAnchor: [35, 38]
+        iconSize: [120, 50],
+        iconAnchor: [60, 38]
       });
 
       const marker = L.marker([dev.latitude, dev.longitude], { icon: fleetIcon });
@@ -587,6 +681,12 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
 
       marker.bindPopup(`
         <div class="p-3 text-xs text-slate-100 font-sans max-w-xs space-y-2">
+          ${isWarningIdleOutsideDC ? `
+            <div class="p-2 rounded-lg bg-rose-500/20 border border-rose-500/50 text-rose-200 font-bold text-[11px] flex items-center gap-1.5 animate-pulse">
+              <span>⚠️ PERINGATAN: IDLE > 60 MNT DILUAR GUDANG PUSAT</span>
+            </div>
+          ` : ''}
+
           <div class="flex items-center justify-between border-b border-slate-700 pb-1.5">
             <div>
               <div class="font-mono font-black text-amber-400 text-sm">${dev.vehiclePlate}</div>
@@ -603,16 +703,16 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               <strong class="text-white font-sans">${dev.driverName}</strong>
             </div>
             <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
-              <span class="text-slate-400 text-[9px] block">Kecepatan:</span>
-              <strong className="text-emerald-400">${dev.currentSpeedKmh} km/jam</strong>
+              <span class="text-slate-400 text-[9px] block">Durasi Diam:</span>
+              <strong class="${isWarningIdleOutsideDC ? 'text-rose-400 font-bold' : 'text-emerald-400'}">${idleMins} MNT</strong>
+            </div>
+            <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+              <span class="text-slate-400 text-[9px] block">Jarak dari Gudang DC:</span>
+              <strong class="${distFromDC > 1.5 ? 'text-amber-300' : 'text-emerald-400'}">${distFromDC} KM</strong>
             </div>
             <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
               <span class="text-slate-400 text-[9px] block">Kontak ACC:</span>
               <strong class="${dev.accStatus === 'ON' ? 'text-emerald-400' : 'text-slate-400'}">${dev.accStatus}</strong>
-            </div>
-            <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
-              <span class="text-slate-400 text-[9px] block">Mileage Hari Ini:</span>
-              <strong className="text-blue-400">${dev.todayMileageKm || 0} KM</strong>
             </div>
           </div>
 
@@ -657,6 +757,47 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
 
   return (
     <div className={`bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col relative ${isFullscreen ? 'fixed inset-4 z-50 h-[calc(100vh-2rem)]' : className}`}>
+      {/* 🚨 CRITICAL ALERT BANNER: ARMADA IDLE/OFF > 60 MNT DILUAR GUDANG PUSAT */}
+      {idleOutsideDCAlerts.length > 0 && (
+        <div className="bg-rose-950/95 border-b-2 border-rose-500 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg animate-pulse backdrop-blur">
+          <div className="flex items-center gap-2.5 text-rose-200">
+            <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+            <div>
+              <span className="font-extrabold text-white uppercase tracking-wider text-[11px] block">
+                🚨 PERINGATAN OPERASIONAL DILUAR ZONA GUDANG PUSAT ({idleOutsideDCAlerts.length} ARMADA)
+              </span>
+              <span className="text-[11px] text-rose-300">
+                Terdeteksi armada posisi idle / OFF &gt; 60 menit di luar area Gudang Pusat Banyuwangi DC.
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {dismissedToastImeis.length > 0 && (
+              <button
+                onClick={() => setDismissedToastImeis([])}
+                className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                title="Tampilkan kembali notifikasi toast yang sebelumnya ditutup"
+              >
+                <Bell size={12} className="text-amber-400" />
+                <span>Reset Toast ({dismissedToastImeis.length})</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                setStatusFilter('alert_idle_outside_dc');
+                setShowWarningModal(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs border border-rose-400 shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Bell size={13} className="animate-bounce" />
+              <span>Inspeksi {idleOutsideDCAlerts.length} Armada Violasi</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Map Control Header Bar */}
       <div className="bg-slate-950/90 border-b border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
@@ -671,7 +812,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               </span>
             </h3>
             <p className="text-xs text-slate-400">
-              Pemantauan koordinat GPS, status kontak ACC, kecepatan, dan overlay heatmap kejadian armada idle 24 jam
+              Pemantauan koordinat GPS, status kontak ACC, kecepatan, dan notifikasi toast alarm idle &gt;60m di luar gudang pusat
             </p>
           </div>
         </div>
@@ -683,7 +824,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
             onClick={() => setShowIdleHeatmap(!showIdleHeatmap)}
             className={`px-3 py-1.5 rounded-xl font-bold border transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
               showIdleHeatmap
-                ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-rose-500/10 animate-pulse'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-rose-500/10'
                 : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
             }`}
             title="Tampilkan / Sembunyikan Overlay Heatmap Kejadian Armada Idle 24 Jam Terakhir"
@@ -762,7 +903,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
         </div>
       </div>
 
-      {/* 🔥 24-Hour Idling Summary Banner Bar (Visible when Heatmap is ON) */}
+      {/* 🔥 24-Hour Idling Summary Banner Bar */}
       {showIdleHeatmap && (
         <div className="bg-slate-950/95 border-b border-rose-500/30 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs backdrop-blur">
           <div className="flex items-center gap-2">
@@ -782,9 +923,6 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
             <span className="px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">
               ⛽ ~{aggregatedIdleMetrics.totalFuelWasted} L Solar Terbuang
             </span>
-            <span className="px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 font-bold">
-              ⚠️ {aggregatedIdleMetrics.highSeverityCount} Kluster Risiko Tinggi (&gt;3 Jam)
-            </span>
           </div>
         </div>
       )}
@@ -798,13 +936,18 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           {/* Floating Map Legend Overlay */}
           <div className="absolute top-3 left-3 z-20 bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 text-[10px] space-y-1.5 font-mono shadow-xl backdrop-blur max-w-[210px]">
             <div className="font-bold text-slate-200 font-sans uppercase border-b border-slate-800 pb-1 flex items-center justify-between">
-              <span>Legenda Posisi &amp; Heatmap</span>
+              <span>Legenda Posisi &amp; Warning</span>
               <button
                 onClick={() => setShowRetailStores(!showRetailStores)}
                 className={`text-[9px] px-1.5 py-0.2 rounded border ${showRetailStores ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
               >
                 Toko: {showRetailStores ? 'ON' : 'OFF'}
               </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 text-rose-400 font-bold">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping border border-rose-300" />
+              <span>🚨 Idle &gt;60m (Luar DC)</span>
             </div>
             <div className="flex items-center gap-1.5 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -814,34 +957,14 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               <span className="w-2 h-2 rounded-full bg-amber-400" />
               <span>Sleeping / Parkir Idle</span>
             </div>
-            <div className="flex items-center gap-1.5 text-rose-400">
-              <span className="w-2 h-2 rounded-full bg-rose-400" />
-              <span>Offline / Sinyal Terputus</span>
-            </div>
-
-            {/* 🔥 Heatmap Legend */}
-            {showIdleHeatmap && (
-              <div className="pt-1 border-t border-slate-800/80 space-y-1">
-                <div className="text-[9px] font-bold text-rose-300 uppercase">🔥 Heatmap Idle 24 Jam:</div>
-                <div className="flex items-center gap-1.5 text-rose-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80 border border-rose-300"></span>
-                  <span>Tinggi (&gt;3 Jam Idle)</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-amber-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80 border border-amber-300"></span>
-                  <span>Sedang (1-3 Jam Idle)</span>
-                </div>
-              </div>
-            )}
-
             <div className="flex items-center gap-1.5 text-blue-400 pt-0.5 border-t border-slate-800/80">
               <span>🏢 Gudang Pusat Banyuwangi DC</span>
             </div>
           </div>
 
-          {/* Quick Focus Active Fleet / Selected Hotspot Banner */}
+          {/* Selected Hotspot Banner */}
           {selectedHotspot && showIdleHeatmap && (
-            <div className="absolute top-3 right-3 z-20 bg-slate-950/95 border border-rose-500/50 rounded-xl p-3 shadow-2xl backdrop-blur max-w-xs space-y-1.5 animate-in fade-in zoom-in-95">
+            <div className="absolute top-3 right-3 z-20 bg-slate-950/95 border border-rose-500/50 rounded-xl p-3 shadow-2xl backdrop-blur max-w-xs space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-rose-400">
                 <span className="flex items-center gap-1">
                   <Flame size={14} />
@@ -857,12 +980,10 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               <div className="text-[11px] text-slate-300">
                 Total Idle: <strong className="text-rose-300">{selectedHotspot.totalIdleHours} Jam</strong> | Solar: <strong className="text-amber-300">~{selectedHotspot.estimatedFuelWastedLiters} L</strong>
               </div>
-              <div className="text-[10px] text-slate-400">
-                Penyebab: <span className="text-slate-200">{selectedHotspot.primaryReason}</span>
-              </div>
             </div>
           )}
 
+          {/* Selected Device Banner */}
           {selectedDevice && (
             <div className="absolute bottom-3 left-3 right-3 z-20 bg-slate-950/95 border border-emerald-500/40 rounded-xl p-3 shadow-2xl backdrop-blur flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
@@ -910,10 +1031,10 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               />
             </div>
 
-            <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-[11px]">
+            <div className="grid grid-cols-4 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-[10px]">
               <button
                 onClick={() => setStatusFilter('all')}
-                className={`flex-1 py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
+                className={`py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
                   statusFilter === 'all' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -921,7 +1042,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               </button>
               <button
                 onClick={() => setStatusFilter('moving')}
-                className={`flex-1 py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
+                className={`py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
                   statusFilter === 'moving' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -929,11 +1050,25 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               </button>
               <button
                 onClick={() => setStatusFilter('sleeping')}
-                className={`flex-1 py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
+                className={`py-1 rounded-lg text-center transition font-semibold cursor-pointer ${
                   statusFilter === 'sleeping' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 Idle
+              </button>
+              <button
+                onClick={() => setStatusFilter('alert_idle_outside_dc')}
+                className={`py-1 rounded-lg text-center transition font-bold cursor-pointer flex items-center justify-center gap-0.5 ${
+                  statusFilter === 'alert_idle_outside_dc' 
+                    ? 'bg-rose-600 text-white shadow-xs animate-pulse' 
+                    : 'text-rose-400 hover:bg-rose-950/50'
+                }`}
+                title="Filter armada posisi idle/off > 60 mnt diluar gudang pusat"
+              >
+                <span>🚨 Warning</span>
+                <span className="px-1 bg-rose-950 rounded-full text-[9px] border border-rose-400">
+                  {idleOutsideDCAlerts.length}
+                </span>
               </button>
             </div>
           </div>
@@ -948,13 +1083,19 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               filteredDevices.map(dev => {
                 const isSelected = selectedDevice?.imei === dev.imei;
                 const isMoving = dev.currentSpeedKmh > 0 || dev.accStatus === 'ON';
+                const idleMins = parseStopDurationMinutes(dev.stopDuration, dev.status, dev.currentSpeedKmh);
+                const distFromDC = getDistanceFromCentralDC(dev.latitude, dev.longitude);
+                const isIdleOrOff = dev.status === 'Sleeping' || dev.accStatus === 'OFF' || dev.currentSpeedKmh === 0;
+                const isViolatingDCIdle = isIdleOrOff && idleMins >= 60 && distFromDC > 1.5;
 
                 return (
                   <div
                     key={dev.imei}
                     onClick={() => focusDevice(dev)}
                     className={`p-2.5 rounded-xl transition cursor-pointer border ${
-                      isSelected 
+                      isViolatingDCIdle
+                        ? 'bg-rose-950/30 border-rose-500/80 hover:bg-rose-950/50 shadow-md'
+                        : isSelected 
                         ? 'bg-slate-900 border-emerald-500/60 shadow-md' 
                         : 'bg-slate-950/40 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-700'
                     }`}
@@ -963,9 +1104,9 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
                       <div>
                         <div className="font-mono font-black text-white text-xs flex items-center gap-1.5">
                           <span>{dev.vehiclePlate}</span>
-                          {dev.vehicleName && (
-                            <span className="text-[10px] text-slate-400 font-normal truncate max-w-[110px]">
-                              ({dev.vehicleName})
+                          {isViolatingDCIdle && (
+                            <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-sans text-[9px] font-bold border border-rose-500/40">
+                              ⚠️ IDLE {idleMins}m
                             </span>
                           )}
                         </div>
@@ -975,13 +1116,15 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
                       </div>
 
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border font-mono shrink-0 ${
-                        dev.status === 'Online' 
+                        isViolatingDCIdle
+                          ? 'bg-rose-600 text-white border-rose-400 animate-pulse'
+                          : dev.status === 'Online' 
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
                           : dev.status === 'Sleeping'
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                           : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                       }`}>
-                        {dev.status === 'Online' && isMoving ? `${dev.currentSpeedKmh} km/h` : dev.status}
+                        {isViolatingDCIdle ? `🚨 >60m Luar DC` : dev.status === 'Online' && isMoving ? `${dev.currentSpeedKmh} km/h` : dev.status}
                       </span>
                     </div>
 
@@ -992,7 +1135,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
 
                     <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono mt-2 pt-1.5 border-t border-slate-800/80">
                       <span>ACC: <strong className={dev.accStatus === 'ON' ? 'text-emerald-400' : 'text-slate-500'}>{dev.accStatus}</strong></span>
-                      <span>Mileage: <strong className="text-blue-400">{dev.todayMileageKm || 0} km</strong></span>
+                      <span>Jarak DC: <strong className={distFromDC > 1.5 ? 'text-rose-400' : 'text-emerald-400'}>{distFromDC} km</strong></span>
                       <span>Bat: {dev.batteryPercent}%</span>
                     </div>
                   </div>
@@ -1002,6 +1145,208 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 🚨 FLOATING TOAST NOTIFICATIONS SYSTEM FOR IDLE/OFF > 60 MINS OUTSIDE CENTRAL WAREHOUSE PT AKK */}
+      {activeToastAlerts.length > 0 && (
+        <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none">
+          {activeToastAlerts.map(toast => (
+            <div
+              key={toast.device.imei}
+              className="pointer-events-auto bg-slate-950/95 border-2 border-rose-500 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-5 fade-in duration-300 space-y-2 relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-amber-500 to-rose-600 animate-pulse" />
+
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-500/50 text-rose-400 flex items-center justify-center shrink-0">
+                    <ShieldAlert size={18} className="animate-bounce" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-[11px] uppercase tracking-wider flex items-center gap-1">
+                      <span>ALARM IDLE DILUAR GUDANG PT AKK</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono">
+                        &gt;60m
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-rose-300 font-mono font-bold mt-0.5">
+                      {toast.device.vehiclePlate} ({toast.device.vehicleName || 'Truck Unit'})
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setDismissedToastImeis(prev => [...prev, toast.device.imei])}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg bg-slate-900 border border-slate-800 transition cursor-pointer"
+                  title="Tutup Notifikasi Toast Ini"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+
+              <div className="text-[10px] text-slate-300 space-y-1 bg-slate-900/80 p-2 rounded-xl border border-slate-800/80 font-sans">
+                <div className="flex items-center justify-between">
+                  <span>Driver: <strong className="text-white">{toast.driverName}</strong></span>
+                  <span className="text-rose-400 font-mono font-bold">⏱️ {toast.idleMinutes} Mnt Idle</span>
+                </div>
+                <div className="text-slate-400 text-[10px] truncate flex items-center gap-1">
+                  <MapPin size={10} className="text-rose-400 shrink-0" />
+                  <span className="truncate">{toast.locationAddress}</span>
+                </div>
+                <div className="text-[10px] text-amber-300 font-mono">
+                  📍 Jarak dari Gudang Pusat DC: <strong>{toast.distanceKmFromDC} KM</strong>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-1.5 pt-0.5">
+                <button
+                  onClick={() => focusDevice(toast.device)}
+                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] transition cursor-pointer flex items-center gap-1 shadow-sm"
+                >
+                  <MapPin size={11} />
+                  <span>Fokus Peta</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    window.alert(`Mengirim pesan WhatsApp peringatan darurat ke Driver ${toast.driverName} (${toast.device.vehiclePlate})...`);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition cursor-pointer flex items-center gap-1 shadow-sm"
+                >
+                  <Phone size={11} />
+                  <span>Hubungi Supir</span>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 🚨 MODAL WARNING INSPEKSI IDLE/OFF > 60 MNT DILUAR GUDANG PUSAT */}
+      {showWarningModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border-2 border-rose-500 rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setShowWarningModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg bg-slate-800 transition"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center shrink-0">
+                <ShieldAlert size={22} className="animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <span>Audit Violasi Armada Idle &gt; 60 Menit Diluar Gudang Pusat</span>
+                  <span className="text-[10px] bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full font-mono font-bold border border-rose-500/40">
+                    {idleOutsideDCAlerts.length} Kasus Terdeteksi
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Daftar armada aktif dengan posisi kunci kontak OFF / Idle &ge; 60 menit diluar zona Gudang Pusat Sukowidi DC (&gt;1,5 KM)
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto max-h-80">
+              <table className="w-full text-left text-xs font-sans">
+                <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th className="p-2.5 font-semibold">Armada &amp; Plat</th>
+                    <th className="p-2.5 font-semibold">Driver Utama</th>
+                    <th className="p-2.5 font-semibold">Durasi Diam</th>
+                    <th className="p-2.5 font-semibold">Jarak dari DC</th>
+                    <th className="p-2.5 font-semibold">Lokasi Terkini</th>
+                    <th className="p-2.5 font-semibold text-center">Tindakan Dispatcher</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-300">
+                  {idleOutsideDCAlerts.map(alertItem => {
+                    const isApproved = approvedAlertImeis.includes(alertItem.device.imei);
+
+                    return (
+                      <tr key={alertItem.device.imei} className="hover:bg-slate-800/50 transition">
+                        <td className="p-2.5 font-mono">
+                          <div className="font-bold text-white text-xs">{alertItem.device.vehiclePlate}</div>
+                          <div className="text-[10px] text-slate-400">{alertItem.device.vehicleName || 'Truck Unit'}</div>
+                        </td>
+                        <td className="p-2.5 font-medium text-slate-200">
+                          {alertItem.driverName}
+                        </td>
+                        <td className="p-2.5 font-mono">
+                          <span className="px-2 py-0.5 rounded font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                            {alertItem.idleMinutes} Mnt
+                          </span>
+                        </td>
+                        <td className="p-2.5 font-mono text-amber-300 font-bold">
+                          {alertItem.distanceKmFromDC} KM
+                        </td>
+                        <td className="p-2.5 text-[11px] text-slate-300 max-w-xs truncate">
+                          {alertItem.locationAddress}
+                        </td>
+                        <td className="p-2.5 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                focusDevice(alertItem.device);
+                                setShowWarningModal(false);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] transition cursor-pointer flex items-center gap-1"
+                              title="Pusatkan peta ke lokasi armada"
+                            >
+                              <MapPin size={10} />
+                              <span>Lihat</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                window.alert(`Mengirim pesan WhatsApp darurat ke Driver ${alertItem.driverName}...`);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition cursor-pointer flex items-center gap-1"
+                              title="Hubungi Driver"
+                            >
+                              <Phone size={10} />
+                              <span>Hubungi</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setApprovedAlertImeis(prev => [...prev, alertItem.device.imei]);
+                              }}
+                              disabled={isApproved}
+                              className={`px-2 py-1 rounded-lg font-bold text-[10px] transition cursor-pointer flex items-center gap-1 ${
+                                isApproved 
+                                  ? 'bg-slate-800 text-slate-400 cursor-not-allowed' 
+                                  : 'bg-amber-600 hover:bg-amber-500 text-white'
+                              }`}
+                            >
+                              <CheckCircle2 size={10} />
+                              <span>{isApproved ? 'Disetujui' : 'Izinkan'}</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+              <p className="text-slate-400 text-[11px]">
+                💡 <strong>Catatan Kebijakan:</strong> Armada yang berhenti &ge; 60m diluar Gudang Pusat tanpa izin tertulis akan secara otomatis dicatat dalam audit evaluasi kinerja pengemudi.
+              </p>
+              <button
+                onClick={() => setShowWarningModal(false)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold transition cursor-pointer"
+              >
+                Tutup Inspeksi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

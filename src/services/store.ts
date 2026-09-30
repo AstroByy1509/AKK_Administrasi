@@ -145,16 +145,8 @@ class LogisticsStore {
       this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     }
 
-    // Auto-migrate stores to strictly enforce verified 15 stores from Google Sheets 'DATA FIX'
-    // and immediately purge legacy 57 stores or corrupt 30 dummy items (e.g., 'Freshman', 'Sophomore')
-    const hasInvalidStores = !this.stores || this.stores.length !== 15 || this.stores.some(s => 
-      s.storeName.includes('Freshman') || 
-      s.storeName.includes('Sophomore') || 
-      s.storeName.includes('Junior') ||
-      s.storeName.includes('Senior') ||
-      s.storeName === 'Transmart Buah Batu Bandung' ||
-      s.storeName.startsWith('Toko Retail ')
-    );
+    // No longer enforcing strict 15 store limit, allowing full sync from Google Sheets
+    const hasInvalidStores = !this.stores;
     if (hasInvalidStores) {
       this.stores = [...INITIAL_STORES];
       this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
@@ -473,7 +465,9 @@ class LogisticsStore {
       ...sch,
       store: this.stores.find(s => s.id === sch.storeId),
       fleet: this.fleets.find(f => f.id === sch.fleetId),
-      crew: this.crews.find(c => c.id === sch.crewId)
+      crew: this.crews.find(c => c.id === sch.crewId),
+      crewHelper: sch.crewHelperId ? this.crews.find(c => c.id === sch.crewHelperId) : undefined,
+      crewHelper2: sch.crewHelper2Id ? this.crews.find(c => c.id === sch.crewHelper2Id) : undefined
     }));
   }
 
