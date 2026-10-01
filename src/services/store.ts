@@ -145,9 +145,9 @@ class LogisticsStore {
       this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     }
 
-    // No longer enforcing strict 15 store limit, allowing full sync from Google Sheets
-    const hasInvalidStores = !this.stores;
-    if (hasInvalidStores) {
+    // Self-heal and migrate stores if missing or if all stores are stacked on identical dummy coordinates (-8.36, 114.15)
+    const isCorruptedStackedStores = this.stores && this.stores.length > 5 && this.stores.filter(s => Math.abs(s.latitude - (-8.36)) < 0.01 && Math.abs(s.longitude - 114.15) < 0.01).length > this.stores.length * 0.8;
+    if (!this.stores || this.stores.length === 0 || isCorruptedStackedStores) {
       this.stores = [...INITIAL_STORES];
       this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
     }

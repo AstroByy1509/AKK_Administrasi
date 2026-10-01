@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route } from 'lucide-react';
+import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route, Maximize2, Minimize2 } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
 import { GoogleSheetsStoreSyncModal } from './GoogleSheetsStoreSyncModal';
 import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
+import { extractCoordinatesFromObject, normalizeStoreWithCoordinates, getStoreLocationType } from '../utils/coordinateParser';
 
 interface CustomerMappingProps {
   onScheduleForStore?: (store: RetailStore) => void;
@@ -15,7 +16,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const [stores, setStores] = useState<RetailStore[]>(() => {
     const s = logisticsStore.getStores();
     console.log(`[CustomerMapping INITIAL] Loaded ${s.length} stores from database.`);
-    return s;
+    return s.map((store, idx) => normalizeStoreWithCoordinates(store, idx));
   });
   const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
   
@@ -25,18 +26,14 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     {
       id: 'diag-init',
       timestamp: new Date().toLocaleTimeString(),
-      message: `Inisialisasi CustomerMapping: Terbaca ${logisticsStore.getStores().length} toko dari database (Target: 312 Toko).`,
+      message: `Inisialisasi CustomerMapping: Terbaca ${logisticsStore.getStores().length} toko aktif dari database.`,
       count: logisticsStore.getStores().length,
-      level: logisticsStore.getStores().length >= 312 ? 'success' : 'info'
+      level: logisticsStore.getStores().length > 0 ? 'success' : 'info'
     }
   ]);
   const [showDiagnosticsDrawer, setShowDiagnosticsDrawer] = useState(false);
-  const [showRawData, setShowRawData] = useState(false);
-  
-  const rawDataPreview = useMemo(() => stores.slice(0, 50), [stores]);
+  const [isMapFullscreen, setIsMapFullscreen] = useState<boolean>(false);
 
-  // State to hold selected week for route visualization
-  const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [showRoutes, setShowRoutes] = useState<boolean>(true);
   const [selectedIsland, setSelectedIsland] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -48,23 +45,23 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const runDiagnosticSync = async () => {
     setFetchStatus('fetching');
     const now = new Date().toLocaleTimeString();
-    console.log(`[CustomerMapping DIAGNOSTIC START] Executing 312-store sync and diagnostic check at ${now}`);
+    console.log(`[CustomerMapping DIAGNOSTIC START] Executing full dataset sync and diagnostic check at ${now}`);
     
     setDiagnosticLogs(prev => [
-      { id: 'diag-' + Date.now(), timestamp: now, message: 'Menjalankan diagnostik & pembacaan 312 toko dari database...', count: stores.length, level: 'info' },
+      { id: 'diag-' + Date.now(), timestamp: now, message: 'Menjalankan diagnostik & pembacaan seluruh dataset toko dari database...', count: stores.length, level: 'info' },
       ...prev
     ]);
 
     try {
       const res = await googleSheetsSyncService.syncNow('Diagnostik Manual CustomerMapping');
-      const freshStores = logisticsStore.getStores();
+      const freshStores = logisticsStore.getStores().map((st, idx) => normalizeStoreWithCoordinates(st, idx));
       setStores(freshStores);
       setFetchStatus('success');
       const timeEnd = new Date().toLocaleTimeString();
       
       console.log(`[CustomerMapping DIAGNOSTIC SUCCESS] Database verified. Total stores active in memory: ${freshStores.length}`);
       setDiagnosticLogs(prev => [
-        { id: 'diag-' + Date.now(), timestamp: timeEnd, message: `Diagnostik Sukses: Terbaca ${freshStores.length} toko retail aktif dari database.`, count: freshStores.length, level: 'success' },
+        { id: 'diag-' + Date.now(), timestamp: timeEnd, message: `Diagnostik Sukses: Terbaca seluruh ${freshStores.length} toko retail aktif dari database.`, count: freshStores.length, level: 'success' },
         ...prev
       ]);
     } catch (err: any) {
@@ -83,20 +80,20 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     console.log(`[CustomerMapping EFFECT] Database store count: ${current.length}`);
     
     if (
-      current.length < 312 || 
-      current.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore') || s.storeName.startsWith('Toko Retail '))
+      current.length === 0 || 
+      current.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore'))
     ) {
       runDiagnosticSync();
     }
 
     const unsubStore = logisticsStore.subscribe(() => {
-      const updated = logisticsStore.getStores();
+      const updated = logisticsStore.getStores().map((st, idx) => normalizeStoreWithCoordinates(st, idx));
       console.log(`[CustomerMapping EVENT] logisticsStore updated. Count: ${updated.length}`);
       setStores(updated);
     });
     const unsubGsheets = googleSheetsSyncService.subscribe(() => {
       setSyncConfig(googleSheetsSyncService.getConfig());
-      const updated = logisticsStore.getStores();
+      const updated = logisticsStore.getStores().map((st, idx) => normalizeStoreWithCoordinates(st, idx));
       console.log(`[CustomerMapping EVENT] googleSheetsSyncService updated. Count: ${updated.length}`);
       setStores(updated);
     });
@@ -106,21 +103,26 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     };
   }, []);
 
-  // Helper to fetch routes for the selected week
+  // Helper to fetch delivery routes from schedule simulations
   const routesForWeek = useMemo(() => {
-    // This replicates the logic in WeeklyRoutePlanner to get routes for a week
-    // Simplified for now based on available data in the simulation context
     try {
       const saved = localStorage.getItem('akk_simulasi_weeks_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return parsed[selectedWeek] || [];
+        if (Array.isArray(parsed)) return parsed;
+        const allRoutes: any[] = [];
+        Object.values(parsed).forEach((weekRoutes: any) => {
+          if (Array.isArray(weekRoutes)) {
+            allRoutes.push(...weekRoutes);
+          }
+        });
+        return allRoutes.length > 0 ? allRoutes : (parsed[1] || []);
       }
     } catch {
       // ignore
     }
     return [];
-  }, [selectedWeek]);
+  }, []);
 
   // Transform routes into polylines for the map
   const routePolylines = useMemo(() => {
@@ -133,7 +135,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
       if (store) {
         const sLat = Number(store.latitude);
         const sLng = Number(store.longitude);
-        if (isNaN(sLat) || isNaN(sLng) || !isFinite(sLat) || !isFinite(sLng)) return null;
+        if (isNaN(sLat) || isNaN(sLng) || !isFinite(sLat) || !isFinite(sLng) || sLat === 0 || sLng === 0) return null;
         return {
           coords: [[-8.2333, 114.3667], [sLat, sLng]] as [number, number][],
           color: route.day === 'Senin' ? '#ef4444' : route.day === 'Selasa' ? '#f59e0b' : route.day === 'Rabu' ? '#10b981' : route.day === 'Kamis' ? '#3b82f6' : route.day === 'Jumat' ? '#8b5cf6' : '#ec4899'
@@ -189,7 +191,14 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
 
     return [
       CENTRAL_WAREHOUSE.coordinates,
-      ...sortedStores.map(s => [Number(s.latitude), Number(s.longitude)] as [number, number]),
+      ...sortedStores
+        .map(s => {
+          const lat = Number(s.latitude);
+          const lng = Number(s.longitude);
+          if (isNaN(lat) || isNaN(lng) || !isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return null;
+          return [lat, lng] as [number, number];
+        })
+        .filter((c): c is [number, number] => c !== null),
       CENTRAL_WAREHOUSE.coordinates
     ];
   }, [showRoutes, filteredStores]);
@@ -216,8 +225,9 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
     });
   };
 
-  const outerIslandCount = stores.filter(s => s.island !== 'Jawa').length;
-  const javaCount = stores.filter(s => s.island === 'Jawa').length;
+  const banyuwangiCount = stores.filter(s => getStoreLocationType(s) === 'dalam_kota').length;
+  const outOfTownCount = stores.filter(s => getStoreLocationType(s) === 'luar_kota').length;
+  const outerIslandCount = stores.filter(s => getStoreLocationType(s) === 'luar_pulau').length;
 
   return (
     <div className="space-y-6">
@@ -241,10 +251,10 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             <button
               onClick={() => googleSheetsSyncService.syncNow('Picu Cepat Toolbar')}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md transition cursor-pointer border border-emerald-500/40"
-              title="Perbarui & sinkronkan ulang langsung 15 toko dari sheet 'DATA FIX'"
+              title="Perbarui & sinkronkan ulang langsung seluruh data toko dari sheet 'DATA FIX'"
             >
               <RefreshCw className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Sinkronkan 15 Toko</span>
+              <span>Sinkronkan Toko ({stores.length})</span>
             </button>
 
             <button
@@ -276,21 +286,21 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
           </div>
 
           <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
-            <span className="text-slate-400 text-xs">Wilayah Jawa</span>
-            <div className="text-xl font-bold text-indigo-400 mt-0.5">{javaCount} Outlet</div>
-            <span className="text-[11px] text-slate-500">Jalur Tol Darat Trans-Jawa</span>
+            <span className="text-slate-400 text-xs">Dalam Kota (Banyuwangi)</span>
+            <div className="text-xl font-bold text-indigo-400 mt-0.5">{banyuwangiCount} Outlet</div>
+            <span className="text-[11px] text-slate-500">Klaster Banyuwangi</span>
+          </div>
+
+          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+            <span className="text-slate-400 text-xs">Luar Kota (Jawa Timur)</span>
+            <div className="text-xl font-bold text-rose-400 mt-0.5">{outOfTownCount} Outlet</div>
+            <span className="text-[11px] text-slate-500">Jember, Situbondo, Lumajang, dll</span>
           </div>
 
           <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
             <span className="text-slate-400 text-xs">Luar Pulau (Antar-Pulau)</span>
             <div className="text-xl font-bold text-emerald-400 mt-0.5">{outerIslandCount} Outlet</div>
-            <span className="text-[11px] text-slate-500">Area Bali</span>
-          </div>
-
-          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
-            <span className="text-slate-400 text-xs">Gudang Pusat</span>
-            <div className="text-xl font-bold text-amber-400 mt-0.5">Banyuwangi DC</div>
-            <span className="text-[11px] text-slate-500">Jawa Timur (Jl. Argopuro No.60)</span>
+            <span className="text-[11px] text-slate-500">Area Bali & Kepulauan</span>
           </div>
         </div>
 
@@ -302,9 +312,9 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
               <div className="font-bold text-white flex items-center gap-2">
                 <span>Status Sinkronisasi Real-Time:</span>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  stores.length >= 312 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  stores.length > 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                 }`}>
-                  {stores.length >= 312 ? `🟢 Sempurna (${stores.length}/312 Toko)` : `🟡 Memuat (${stores.length}/312 Toko)`}
+                  {stores.length > 0 ? `🟢 Aktif (${stores.length} Toko Terdaftar)` : `🟡 Memuat (0 Toko)`}
                 </span>
               </div>
               <div className="text-[11px] text-slate-400 mt-0.5">
@@ -321,7 +331,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${fetchStatus === 'fetching' ? 'animate-spin' : ''}`} />
-              <span>{fetchStatus === 'fetching' ? 'Memindai...' : '🔍 Jalankan Diagnostik 312 Toko'}</span>
+              <span>{fetchStatus === 'fetching' ? 'Memindai...' : `🔍 Jalankan Diagnostik Toko (${stores.length})`}</span>
             </button>
 
             <button
@@ -330,13 +340,6 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer"
             >
               {showDiagnosticsDrawer ? 'Sembunyikan Log Diagnostik' : `Lihat Log Diagnostik (${diagnosticLogs.length})`}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowRawData(!showRawData)}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer"
-            >
-              {showRawData ? 'Sembunyikan Data Mentah' : 'Lihat Data Mentah (50 Pertama)'}
             </button>
           </div>
         </div>
@@ -365,18 +368,6 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             </div>
           </div>
         )}
-
-        {/* Expandable Raw Data Viewer */}
-        {showRawData && (
-          <div className="mt-3 bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs font-mono max-h-96 overflow-y-auto">
-            <div className="font-bold text-emerald-400 pb-2 border-b border-slate-850">
-              Raw Data Inspection (First 50 Stores)
-            </div>
-            <pre className="text-slate-300 whitespace-pre-wrap">
-              {JSON.stringify(rawDataPreview, null, 2)}
-            </pre>
-          </div>
-        )}
       </div>
 
       {/* Main Map & Filter Area */}
@@ -399,16 +390,29 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             </div>
 
             <div className="flex items-center gap-2">
-              <select
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+              <button 
+                type="button"
+                onClick={() => setIsMapFullscreen(!isMapFullscreen)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow ${
+                  isMapFullscreen
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white ring-2 ring-rose-400'
+                    : 'bg-blue-600 hover:bg-blue-500 text-white'
+                }`}
+                title={isMapFullscreen ? 'Keluar dari layar penuh' : 'Buka peta dalam mode layar penuh (Fullscreen)'}
               >
-                <option value={1}>Pekan 1 (Jalur Utama 15 Toko)</option>
-                <option value={2}>Pekan 2 (Jalur Klaster Genteng)</option>
-                <option value={3}>Pekan 3 (Jalur Banyuwangi & Kalipuro)</option>
-                <option value={4}>Pekan 4 (Jalur Konsolidasi Bulanan)</option>
-              </select>
+                {isMapFullscreen ? (
+                  <>
+                    <Minimize2 className="w-3.5 h-3.5" />
+                    <span>Keluar Fullscreen</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Layar Penuh (Fullscreen)</span>
+                  </>
+                )}
+              </button>
+
               <button 
                 type="button"
                 onClick={() => setShowRoutes(!showRoutes)}
@@ -449,23 +453,27 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             id="customer-mapping-container"
             className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col w-full h-[620px] min-h-[500px]"
           >
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-2 px-1 shrink-0">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
-                  Gudang Banyuwangi
+            <div className="flex items-center justify-between text-xs text-slate-400 mb-2.5 px-1 shrink-0 gap-2 flex-wrap">
+              <div className="flex items-center gap-3.5 flex-wrap text-[11px]">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-amber-500 inline-block ring-2 ring-amber-300/40"></span>
+                  <span className="font-semibold text-slate-200">Gudang Banyuwangi DC</span>
                 </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-indigo-600 inline-block"></span>
-                  Toko Retail Jawa
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-indigo-600 inline-block ring-2 ring-indigo-300/40"></span>
+                  <span className="font-semibold text-slate-200">Dalam Kota (Banyuwangi)</span>
                 </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-emerald-600 inline-block"></span>
-                  Toko Luar Pulau
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-rose-500 inline-block ring-2 ring-rose-300/40"></span>
+                  <span className="font-semibold text-rose-300">Luar Kota (Jember, Situbondo, Lumajang, dll)</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block ring-2 ring-emerald-300/40"></span>
+                  <span className="font-semibold text-emerald-300">Luar Pulau (Antar-Pulau)</span>
                 </span>
               </div>
-              <span className="text-[11px] text-slate-500 font-mono">
-                Menampilkan {filteredStores.length} dari {stores.length} toko
+              <span className="text-[11px] text-slate-400 font-mono">
+                Menampilkan <strong className="text-white">{filteredStores.length}</strong> dari {stores.length} toko
               </span>
             </div>
 
@@ -479,6 +487,8 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 heightClass="h-full w-full flex-1 min-h-0"
                 showWarehouse={true}
                 plannedPolyline={plannedPolylineCoords}
+                externalIsFullscreen={isMapFullscreen}
+                onToggleFullscreen={() => setIsMapFullscreen(!isMapFullscreen)}
               />
             </div>
           </div>
@@ -488,7 +498,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
         <div className="lg:col-span-4 space-y-4">
           {/* Selected Store Inspector */}
           {selectedStore ? (
-            <div className="bg-slate-900 border border-blue-500/50 rounded-xl p-5 shadow-lg space-y-4">
+            <div className="bg-slate-900 border border-blue-500/50 rounded-xl p-5 shadow-lg space-y-4 animate-card-fade-in">
               <div className="flex items-center justify-between">
                 <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
                   {selectedStore.storeCategory}
@@ -576,7 +586,7 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
             <div className="divide-y divide-slate-800 max-h-[380px] overflow-y-auto">
               {filteredStores.map(store => {
                 const isSelected = selectedStore?.id === store.id;
-                const isOuter = store.island !== 'Jawa';
+                const locType = getStoreLocationType(store);
                 return (
                   <div
                     key={store.id}
@@ -589,9 +599,13 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                       <span className="font-semibold text-white pr-6">{store.storeName}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                          isOuter ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'
+                          locType === 'luar_pulau'
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : locType === 'luar_kota'
+                            ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
                         }`}>
-                          {store.island}
+                          {locType === 'luar_pulau' ? store.island : locType === 'luar_kota' ? 'Luar Kota' : 'Banyuwangi'}
                         </span>
                         <button
                           onClick={(e) => {

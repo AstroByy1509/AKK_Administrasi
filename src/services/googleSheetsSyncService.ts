@@ -1,6 +1,6 @@
 import { logisticsStore } from './store';
 import { RetailStore } from '../types';
-import { DATA_FIX_SHEET_PRESETS, generate312Presets, sanitizeCoordinate } from '../components/GoogleSheetsStoreSyncModal';
+import { DATA_FIX_SHEET_PRESETS, getDefaultStorePresets, generate312Presets, sanitizeCoordinate } from '../components/GoogleSheetsStoreSyncModal';
 
 export interface SyncLogEntry {
   id: string;
@@ -42,9 +42,137 @@ export interface CorruptedStoreIssue {
 }
 
 /**
- * Validates raw coordinate values from Google Sheets.
- * Detects missing data, unparseable strings, NaN, zeros, and out-of-bounds geographic coords.
+ * Robustly parses a single row string from Google Sheets or pasted text.
+ * Correctly extracts store names (even with hyphens or numbers) and coordinates.
  */
+export function parseStoreLine(rawLine: string, lineIndex: number): {
+  no: number;
+  storeCode: string;
+  storeName: string;
+  phone: string;
+  address: string;
+  rawLat: string;
+  rawLng: string;
+  latitude: number;
+  longitude: number;
+  city: string;
+  island: RetailStore['island'];
+  storeCategory: RetailStore['storeCategory'];
+} | null {
+  const line = rawLine.trim();
+  if (!line) return null;
+
+  const lineUpper = line.toUpperCase();
+  if (
+    lineUpper.startsWith('NO\t') ||
+    lineUpper.startsWith('NO,') ||
+    lineUpper.startsWith('NO ;') ||
+    lineUpper.includes('HALAMAN') ||
+    lineUpper.includes('PAGE') ||
+    lineUpper.includes('NAMA TOKO') ||
+    lineUpper.includes('NAMA PELANGGAN')
+  ) {
+    return null;
+  }
+
+  let tokens: string[] = [];
+  if (line.includes('\t')) {
+    tokens = line.split('\t').map(t => t.trim().replace(/^"|"$/g, ''));
+  } else if (line.includes(';') && (line.match(/;/g) || []).length >= 2) {
+    tokens = line.split(';').map(t => t.trim().replace(/^"|"$/g, ''));
+  } else if (line.includes(',') && (line.match(/,/g) || []).length >= 2) {
+    tokens = line.split(',').map(t => t.trim().replace(/^"|"$/g, ''));
+  } else {
+    tokens = line.split(/\s+/).map(t => t.trim().replace(/^"|"$/g, ''));
+  }
+
+  tokens = tokens.filter(t => t.length > 0);
+  if (tokens.length < 2) return null;
+
+  // Find longitude index: numeric string with at least 4 digits, starts with '11' or '1.' or contains 114, no letters
+  let lngIdx = -1;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i];
+    if (/[a-zA-Z]/.test(t)) continue;
+    const digits = t.replace(/[^\d]/g, '');
+    if (digits.length >= 4 && (digits.startsWith('11') || digits.startsWith('114') || digits.startsWith('113') || digits.startsWith('115') || digits.startsWith('112') || digits.startsWith('1'))) {
+      lngIdx = i;
+      break;
+    }
+  }
+
+  // Find latitude index: numeric string with at least 3 digits, starts with '-' or starts with '8', no letters
+  let latIdx = -1;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (i === lngIdx) continue;
+    const t = tokens[i];
+    if (/[a-zA-Z]/.test(t)) continue;
+    const digits = t.replace(/[^\d]/g, '');
+    if (digits.length >= 3 && (t.startsWith('-') || digits.startsWith('8'))) {
+      latIdx = i;
+      break;
+    }
+  }
+
+  let rawLat = '-8.3645';
+  let rawLng = '114.1529';
+  let storeName = '';
+  let no = lineIndex + 1;
+
+  if (latIdx !== -1 && lngIdx !== -1) {
+    rawLat = tokens[latIdx];
+    rawLng = tokens[lngIdx];
+
+    let nameStartIdx = 0;
+    const firstTok = tokens[0];
+    if (/^\d+$/.test(firstTok)) {
+      no = parseInt(firstTok, 10);
+      nameStartIdx = 1;
+    }
+
+    const nameParts = tokens.filter((_, idx) => idx >= nameStartIdx && idx !== latIdx && idx !== lngIdx);
+    storeName = nameParts.join(' ').trim();
+  } else if (tokens.length >= 4) {
+    if (/^\d+$/.test(tokens[0])) {
+      no = parseInt(tokens[0], 10);
+      storeName = tokens[1];
+      rawLat = tokens[2];
+      rawLng = tokens[3];
+    } else {
+      storeName = tokens[0];
+      rawLat = tokens[1];
+      rawLng = tokens[2];
+    }
+  } else if (tokens.length === 3) {
+    storeName = tokens[0];
+    rawLat = tokens[1];
+    rawLng = tokens[2];
+  } else {
+    storeName = tokens[0];
+  }
+
+  if (!storeName) {
+    storeName = `Toko Retail ${no}`;
+  }
+
+  const cleanLat = sanitizeCoordinate(rawLat, false);
+  const cleanLng = sanitizeCoordinate(rawLng, true);
+
+  return {
+    no,
+    storeCode: `RET-BWI-${no.toString().padStart(3, '0')}`,
+    storeName,
+    phone: '-',
+    address: 'Kabupaten Banyuwangi',
+    rawLat,
+    rawLng,
+    latitude: cleanLat,
+    longitude: cleanLng,
+    city: 'Banyuwangi',
+    island: 'Jawa',
+    storeCategory: 'Supermarket'
+  };
+}
 export function validateCoordinateData(
   rawLat: string | number | undefined,
   rawLng: string | number | undefined
@@ -136,9 +264,9 @@ class GoogleSheetsSyncService {
     this.config = this.loadConfig();
     this.syncLogs = this.loadLogs();
 
-    // Auto-sync on launch if enabled or if store count is not 15 or corrupted stores present
+    // Auto-sync on launch if enabled and no stores exist or corrupted dummy stores present
     const currentStores = logisticsStore.getStores();
-    if (this.config.syncOnAppLaunch || currentStores.length !== 15 || currentStores.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore'))) {
+    if (this.config.syncOnAppLaunch && (currentStores.length === 0 || currentStores.some(s => s.storeName.includes('Freshman') || s.storeName.includes('Sophomore')))) {
       setTimeout(() => {
         this.syncNow('Sinkronisasi Otomatis Sheet DATA FIX');
       }, 300);
@@ -323,37 +451,10 @@ class GoogleSheetsSyncService {
           const isRelevantRetailStoreSheet = headerLower.includes('toko') || headerLower.includes('store') || headerLower.includes('outlet') || headerLower.includes('genteng') || headerLower.includes('banyuwangi') || headerLower.includes('latitude') || headerLower.includes('nama');
 
           if (!isSampleStudentDataset && isRelevantRetailStoreSheet) {
-            const parsed = lines.slice(1).map((line, idx) => {
-              const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-              // Skip header rows and page markers
-              if (cols[0] === 'NO' || cols[0].toUpperCase().includes('HALAMAN')) return null;
-
-              // Handle cases where lat/lng might be combined in one column (e.g. "-8.36, 114.15") or split
-              let rawLat = cols[4] || '';
-              let rawLng = cols[5] || '';
-              
-              // If combined in one col (e.g., column 4), split it
-              if (rawLat.includes(',')) {
-                const parts = rawLat.split(',');
-                rawLat = parts[0].trim();
-                rawLng = parts[1]?.trim() || rawLng;
-              }
-
-              return {
-                no: idx + 1,
-                storeCode: cols[1] || `RET-BWI-${(idx + 1).toString().padStart(3, '0')}`,
-                storeName: cols[1] || `Toko Retail ${idx + 1}`,
-                phone: cols[2] || '-',
-                address: cols[3] || 'Kabupaten Banyuwangi',
-                rawLat: rawLat || '-8.36',
-                rawLng: rawLng || '114.15',
-                latitude: sanitizeCoordinate(rawLat || '-8.36', false),
-                longitude: sanitizeCoordinate(rawLng || '114.15', true),
-                city: 'Banyuwangi',
-                island: 'Jawa' as RetailStore['island'],
-                storeCategory: 'Supermarket' as RetailStore['storeCategory']
-              };
-            }).filter((s): s is NonNullable<typeof s> => !!s && !!s.storeName && !s.storeName.includes('Freshman'));
+            const parsed = lines
+              .slice(1)
+              .map((line, idx) => parseStoreLine(line, idx))
+              .filter((s): s is NonNullable<typeof s> => !!s && !!s.storeName && !s.storeName.includes('Freshman'));
 
             if (parsed.length > 0) {
               storeRecords = parsed;
@@ -364,12 +465,12 @@ class GoogleSheetsSyncService {
     } catch (error) {
       console.error('[BatchSync] Failed to fetch live Google Sheet data:', error);
       // Fallback to presets if online fetch fails, to ensure dashboard isn't empty
-      storeRecords = generate312Presets();
+      storeRecords = getDefaultStorePresets();
     }
     
     // If no records were fetched/found after all attempts, fallback
     if (storeRecords.length === 0) {
-        storeRecords = generate312Presets();
+        storeRecords = getDefaultStorePresets();
     }
 
 
@@ -411,8 +512,8 @@ class GoogleSheetsSyncService {
           province: 'Jawa Timur',
           city: p.city || 'Banyuwangi',
           address: p.address,
-          latitude: valResult.cleanLat,
-          longitude: valResult.cleanLng,
+          latitude: p.latitude && !isNaN(p.latitude) && p.latitude !== 0 ? p.latitude : valResult.cleanLat,
+          longitude: p.longitude && !isNaN(p.longitude) && p.longitude !== 0 ? p.longitude : valResult.cleanLng,
           contactPerson: 'Penanggung Jawab Toko',
           phone: p.phone && p.phone !== '-' ? p.phone : '+62 812-3344-5566',
           deliveryWindow: '08:00 - 16:00',
@@ -501,53 +602,11 @@ class GoogleSheetsSyncService {
 
   public importCsvData(csvText: string): { total: number; corruptedCount: number; stores: RetailStore[] } {
     const lines = csvText.split('\n').filter(l => l.trim().length > 0);
-    const storeRecords: Array<{
-      no: number;
-      storeCode: string;
-      storeName: string;
-      phone: string;
-      address: string;
-      rawLat: string;
-      rawLng: string;
-      city: string;
-      island: RetailStore['island'];
-      storeCategory: RetailStore['storeCategory'];
-    }> = [];
+    const parsedRecords = lines
+      .map((line, idx) => parseStoreLine(line, idx))
+      .filter((s): s is NonNullable<typeof s> => !!s && !!s.storeName && !s.storeName.includes('Freshman'));
 
-    let startIndex = 0;
-    if (lines[0] && (lines[0].toLowerCase().includes('nama') || lines[0].toLowerCase().includes('lat') || lines[0].toLowerCase().includes('no'))) {
-      startIndex = 1;
-    }
-
-    for (let i = startIndex; i < lines.length; i++) {
-      const line = lines[i];
-      const cols = line.includes('\t') ? line.split('\t') : line.split(',');
-      const cleanCols = cols.map(c => c.trim().replace(/^"|"$/g, ''));
-      
-      const no = i - startIndex + 1;
-      const storeName = cleanCols[1] || cleanCols[0] || `Toko Pelanggan ${no}`;
-      if (storeName.toUpperCase().includes('NAMA TOKO') || storeName.toUpperCase().includes('NAMA PELANGGAN')) continue;
-
-      // Expected Order: NO, NAMA TOKO, NOMOR TELEPON, ALAMAT, Latitude, Longitude
-      // Indexing: 0, 1, 2, 3, 4, 5
-      const rawLat = cleanCols[4] || '-8.36';
-      const rawLng = cleanCols[5] || '114.15';
-
-      storeRecords.push({
-        no,
-        storeCode: `RET-BWI-${no.toString().padStart(3, '0')}`,
-        storeName: cleanCols[1] || `Toko Pelanggan ${no}`,
-        phone: cleanCols[2] || '-',
-        address: cleanCols[3] || 'Kabupaten Banyuwangi',
-        rawLat,
-        rawLng,
-        city: 'Banyuwangi',
-        island: 'Jawa',
-        storeCategory: 'Supermarket'
-      });
-    }
-
-    const recordsToUse = storeRecords.length > 0 ? storeRecords : generate312Presets();
+    const recordsToUse = parsedRecords.length > 0 ? parsedRecords : getDefaultStorePresets();
     const corruptedStores: CorruptedStoreIssue[] = [];
     const newRetailStores: RetailStore[] = recordsToUse.map((p, idx) => {
       const valResult = validateCoordinateData(p.rawLat, p.rawLng);
@@ -568,14 +627,14 @@ class GoogleSheetsSyncService {
         storeName: p.storeName,
         island: 'Jawa',
         province: 'Jawa Timur',
-        city: 'Banyuwangi',
+        city: p.city || 'Banyuwangi',
         address: p.address,
-        latitude: valResult.cleanLat,
-        longitude: valResult.cleanLng,
+        latitude: p.latitude && !isNaN(p.latitude) && p.latitude !== 0 ? p.latitude : valResult.cleanLat,
+        longitude: p.longitude && !isNaN(p.longitude) && p.longitude !== 0 ? p.longitude : valResult.cleanLng,
         contactPerson: 'PIC Toko',
-        phone: p.phone,
+        phone: p.phone && p.phone !== '-' ? p.phone : '+62 812-3344-5566',
         deliveryWindow: '08:00 - 16:00',
-        storeCategory: valResult.isValid ? 'Supermarket' : 'Needs Correction'
+        storeCategory: valResult.isValid ? p.storeCategory || 'Supermarket' : 'Needs Correction'
       };
     });
 

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import L from 'leaflet';
-import { Compass, RotateCcw } from 'lucide-react';
+import { Compass, RotateCcw, Maximize2, Minimize2, X, Layers, Phone, Navigation, MapPin } from 'lucide-react';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
 import { RetailStore, TrackingPoint, RouteStop } from '../types';
+import { extractCoordinatesFromObject, getStoreLocationType } from '../utils/coordinateParser';
 
 interface LeafletMapProps {
   stores?: RetailStore[];
@@ -19,6 +21,9 @@ interface LeafletMapProps {
   plannedPolyline?: [number, number][];
   isFleetMode?: boolean;
   selectedFleetName?: string;
+  allowFullscreen?: boolean;
+  externalIsFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 export const LeafletMap: React.FC<LeafletMapProps> = ({
@@ -35,7 +40,10 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   heightClass = 'h-full min-h-[480px] w-full',
   plannedPolyline = [],
   isFleetMode = false,
-  selectedFleetName
+  selectedFleetName,
+  allowFullscreen = true,
+  externalIsFullscreen,
+  onToggleFullscreen
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -45,6 +53,49 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   const lastFilterKeyRef = useRef<string>('');
   const lastSelectedStoreIdRef = useRef<string | null>(null);
   const currentBoundsRef = useRef<L.LatLngBounds | null>(null);
+  const [internalIsFullscreen, setInternalIsFullscreen] = useState<boolean>(false);
+
+  const isFullscreen = externalIsFullscreen !== undefined ? externalIsFullscreen : internalIsFullscreen;
+
+  const toggleFullscreenMode = () => {
+    if (onToggleFullscreen) {
+      onToggleFullscreen();
+    } else {
+      setInternalIsFullscreen(prev => !prev);
+    }
+  };
+
+  // Handle Fullscreen Keydown (ESC key)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        if (onToggleFullscreen) {
+          onToggleFullscreen();
+        } else {
+          setInternalIsFullscreen(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, onToggleFullscreen]);
+
+  // Invalidate Map Size when entering/exiting Fullscreen
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      const timer = setTimeout(() => {
+        mapInstanceRef.current?.invalidateSize();
+        if (currentBoundsRef.current && !userInteractedRef.current) {
+          mapInstanceRef.current?.fitBounds(currentBoundsRef.current, {
+            padding: [50, 50],
+            maxZoom: 13,
+            animate: false
+          });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isFullscreen]);
 
   // Initialize Map
   useEffect(() => {
@@ -134,7 +185,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         mapInstanceRef.current = null;
       }
     };
-  }, []);
+  }, [isFullscreen]);
 
   // Update Layers when props change
   useEffect(() => {
@@ -211,22 +262,40 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       return st.island === highlightIsland;
     });
 
-    filteredStores.forEach(store => {
-      let lat = Number(store.latitude);
-      let lng = Number(store.longitude);
+    const seenCoordKeys = new Map<string, number>();
 
-      // Guard against invalid coordinates or NaN so Leaflet never crashes
-      if (isNaN(lat) || !isFinite(lat) || lat === 0) lat = -8.3645;
-      if (isNaN(lng) || !isFinite(lng) || lng === 0) lng = 114.1529;
+    filteredStores.forEach((store, sIdx) => {
+      const coords = extractCoordinatesFromObject(store, sIdx);
+      let lat = coords.latitude;
+      let lng = coords.longitude;
+
+      // Anti-stacking micro-dispersion: if multiple stores have identical coordinates, apply tiny offset (< 50m) so pins don't overlap completely
+      const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
+      const duplicateCount = seenCoordKeys.get(coordKey) || 0;
+      seenCoordKeys.set(coordKey, duplicateCount + 1);
+
+      if (duplicateCount > 0) {
+        const angle = (duplicateCount * 137.5 * Math.PI) / 180;
+        const radius = 0.0004 * Math.sqrt(duplicateCount); // approx 30-50m
+        lat = lat + Math.sin(angle) * radius;
+        lng = lng + Math.cos(angle) * radius;
+      }
 
       const isSelected = selectedStoreId === store.id;
-      const isOuterIsland = store.island !== 'Jawa';
+      const locType = getStoreLocationType(store);
 
-      const pinColor = isSelected
-        ? 'bg-blue-600 border-white text-white scale-125 z-50 shadow-xl ring-2 ring-blue-400'
-        : isOuterIsland
-        ? 'bg-emerald-500 border-white text-white shadow-md'
-        : 'bg-indigo-600 border-white text-white shadow-md';
+      let pinColor = 'bg-indigo-600 border-white text-white shadow-md ring-1 ring-indigo-400';
+      let badgeHtml = '<span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">Dalam Kota (Banyuwangi)</span>';
+
+      if (isSelected) {
+        pinColor = 'bg-blue-600 border-white text-white scale-125 z-50 shadow-xl ring-4 ring-blue-400';
+      } else if (locType === 'luar_pulau') {
+        pinColor = 'bg-emerald-500 border-white text-white shadow-md ring-1 ring-emerald-300';
+        badgeHtml = `<span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">${store.island} (Luar Pulau)</span>`;
+      } else if (locType === 'luar_kota') {
+        pinColor = 'bg-rose-500 border-white text-white shadow-md ring-1 ring-rose-300';
+        badgeHtml = `<span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">Luar Kota (${store.city || 'Jawa Timur'})</span>`;
+      }
 
       const storeIcon = L.divIcon({
         className: 'custom-store-pin',
@@ -236,7 +305,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
               <span class="w-2 h-2 rounded-full bg-white"></span>
             </div>
             <div class="absolute bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] px-2 py-1 rounded shadow-xl whitespace-nowrap z-50 border border-slate-700 pointer-events-none">
-              <strong>${store.storeCode}</strong>: ${store.storeName}
+              <strong>${store.storeCode}</strong>: ${store.storeName} (${locType === 'luar_kota' ? 'Luar Kota' : locType === 'luar_pulau' ? 'Luar Pulau' : 'Banyuwangi'})
             </div>
           </div>
         `,
@@ -249,30 +318,37 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           if (onSelectStore) onSelectStore(store);
         });
 
-      const popupContent = L.DomUtil.create('div', 'min-w-[240px] font-sans');
+      const popupContent = L.DomUtil.create('div', 'min-w-[250px] font-sans p-0.5');
       popupContent.innerHTML = `
-        <div class="flex items-center justify-between mb-1">
-          <span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${isOuterIsland ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'}">
-            ${store.island} ${isOuterIsland ? '(Luar Pulau)' : ''}
-          </span>
-          <span class="text-[10px] text-slate-500 font-mono">${store.storeCode}</span>
+        <div class="flex items-center justify-between mb-1.5">
+          ${badgeHtml}
+          <span class="text-[10px] text-slate-500 font-mono font-bold">${store.storeCode}</span>
         </div>
         <h4 class="font-bold text-slate-900 text-sm leading-snug">${store.storeName}</h4>
         <p class="text-xs text-slate-600 mt-1">${store.address}</p>
-        <div class="mt-2.5 pt-2 border-t border-slate-200 grid grid-cols-2 gap-1 text-[11px] text-slate-600">
+        <div class="mt-2.5 pt-2 border-t border-slate-200 grid grid-cols-2 gap-1.5 text-[11px] text-slate-600">
           <div><strong>Kategori:</strong> ${store.storeCategory}</div>
-          <div><strong>Jendela Kirim:</strong> ${store.deliveryWindow}</div>
+          <div><strong>Kota:</strong> ${store.city || '-'}</div>
+          <div><strong>PIC:</strong> ${store.contactPerson || '-'}</div>
+          <div><strong>Jendela Kirim:</strong> ${store.deliveryWindow || '08:00-17:00'}</div>
         </div>
+        ${store.phone ? `<div class="text-[11px] mt-1 text-slate-600"><strong>Telp:</strong> <a href="tel:${store.phone}" class="text-blue-600 font-bold hover:underline">${store.phone}</a></div>` : ''}
       `;
-      const btnContainer = L.DomUtil.create('div', 'mt-3 pt-2 border-t border-slate-200', popupContent);
-      const btn = L.DomUtil.create('button', 'w-full py-1.5 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition', btnContainer);
-      btn.innerHTML = 'Buat Jadwal';
-      L.DomEvent.on(btn, 'click', () => {
+      const btnContainer = L.DomUtil.create('div', 'mt-3 pt-2 border-t border-slate-200 flex items-center gap-1.5', popupContent);
+      const btnSchedule = L.DomUtil.create('button', 'flex-1 py-1.5 px-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer', btnContainer);
+      btnSchedule.innerHTML = 'Buat Jadwal';
+      L.DomEvent.on(btnSchedule, 'click', () => {
         if (onSchedule) onSchedule(store);
         map.closePopup();
       });
 
       storeMarker.bindPopup(popupContent);
+
+      if (isSelected) {
+        setTimeout(() => {
+          storeMarker.openPopup();
+        }, 150);
+      }
 
       layerGroup.addLayer(storeMarker);
       bounds.push([lat, lng]);
@@ -443,7 +519,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         initialFitDoneRef.current = true;
       }
     }
-  }, [stores, selectedStoreId, trackingPoints, stops, showWarehouse, highlightIsland, plannedPolyline, isFleetMode, selectedFleetName, centerCoords, zoomLevel]);
+  }, [stores, selectedStoreId, trackingPoints, stops, showWarehouse, highlightIsland, plannedPolyline, isFleetMode, selectedFleetName, centerCoords, zoomLevel, isFullscreen]);
 
   const handleResetView = () => {
     if (mapInstanceRef.current && currentBoundsRef.current) {
@@ -456,20 +532,162 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     }
   };
 
-  return (
-    <div className={`relative w-full ${heightClass} rounded-xl overflow-hidden shadow-inner border border-slate-800 flex flex-col`}>
-      {/* Floating Re-center / Fit All Stores Button */}
-      <button
-        type="button"
-        onClick={handleResetView}
-        className="absolute top-3 right-3 z-[400] bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 px-2.5 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 text-xs font-semibold backdrop-blur-sm transition cursor-pointer active:scale-95"
-        title="Pusatkan kembali peta ke seluruh outlet"
-      >
-        <Compass className="w-3.5 h-3.5 text-amber-400" />
-        <span>Pusatkan Peta</span>
-      </button>
+  const mapElement = (
+    <div
+      className={
+        isFullscreen
+          ? 'fixed inset-0 !z-[999999] w-screen h-screen bg-[#090d16] text-white flex flex-col p-3 m-0 overflow-hidden font-sans'
+          : `relative w-full ${heightClass} rounded-xl overflow-hidden shadow-inner border border-slate-800 flex flex-col`
+      }
+    >
+      {/* Floating Controls Bar (Fullscreen & Reset View) */}
+      <div className="absolute top-3 right-3 z-[400] flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleResetView}
+          className="bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 px-3 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 text-xs font-semibold backdrop-blur-sm transition cursor-pointer active:scale-95"
+          title="Pusatkan kembali peta ke seluruh outlet"
+        >
+          <Compass className="w-3.5 h-3.5 text-amber-400" />
+          <span>Pusatkan Peta</span>
+        </button>
+
+        {allowFullscreen && (
+          <button
+            type="button"
+            onClick={toggleFullscreenMode}
+            className={`px-3 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 text-xs font-bold backdrop-blur-sm transition cursor-pointer active:scale-95 border ${
+              isFullscreen
+                ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-400 ring-2 ring-rose-400/40'
+                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
+            }`}
+            title={isFullscreen ? 'Keluar dari Mode Fullscreen (Esc)' : 'Tampilkan Peta Layar Penuh (Fullscreen)'}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-white" />
+                <span>Keluar Fullscreen (Esc)</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-blue-400" />
+                <span>Layar Penuh</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {isFullscreen && (
+        <div className="absolute top-3 left-3 z-[400] bg-slate-900/95 border border-slate-800 px-3.5 py-2 rounded-xl shadow-2xl backdrop-blur-md text-xs flex items-center gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+          <div>
+            <div className="font-bold text-white flex items-center gap-2">
+              <span>Mode Layar Penuh (GIS Intelligence & Route Intelligence)</span>
+              <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] border border-blue-500/30">
+                {stores.length} Toko
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Klik pada titik toko mana saja untuk melihat rincian &bull; Tekan <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono">Esc</kbd> untuk keluar
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Detail Card in Fullscreen Mode when a store is selected */}
+      {isFullscreen && selectedStoreId && (
+        (() => {
+          const selStore = stores.find(s => s.id === selectedStoreId);
+          if (!selStore) return null;
+          const locType = getStoreLocationType(selStore);
+          return (
+            <div className="absolute bottom-6 right-6 z-[450] bg-slate-900/95 border border-blue-500/60 w-80 max-w-[calc(100vw-3rem)] rounded-2xl p-4 shadow-2xl backdrop-blur-md text-xs space-y-3 animate-card-fade-in text-white">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  locType === 'luar_pulau'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : locType === 'luar_kota'
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                    : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                }`}>
+                  {locType === 'luar_pulau' ? `${selStore.island} (Luar Pulau)` : locType === 'luar_kota' ? `Luar Kota (${selStore.city || 'Jatim'})` : 'Dalam Kota (Banyuwangi)'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] text-slate-400">{selStore.storeCode}</span>
+                  {onSelectStore && (
+                    <button
+                      type="button"
+                      onClick={() => onSelectStore({} as any)}
+                      className="text-slate-400 hover:text-white p-0.5 rounded hover:bg-slate-800 transition"
+                      title="Tutup Kartu Detail"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-white text-sm leading-snug">{selStore.storeName}</h4>
+                <p className="text-slate-400 text-[11px] mt-1 flex items-start gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                  <span>{selStore.address}</span>
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-800 text-slate-300">
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-500 block text-[10px]">Kategori:</span>
+                  <strong className="text-slate-200">{selStore.storeCategory}</strong>
+                </div>
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-500 block text-[10px]">Jendela Kirim:</span>
+                  <strong className="text-amber-400">{selStore.deliveryWindow}</strong>
+                </div>
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-500 block text-[10px]">PIC Toko:</span>
+                  <strong className="text-slate-200">{selStore.contactPerson || '-'}</strong>
+                </div>
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-500 block text-[10px]">Kota/Daerah:</span>
+                  <strong className="text-slate-200">{selStore.city || '-'}</strong>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                {selStore.phone && (
+                  <a
+                    href={`tel:${selStore.phone}`}
+                    className="flex-1 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 border border-slate-700 transition"
+                  >
+                    <Phone className="w-3 h-3" />
+                    <span>Hubungi</span>
+                  </a>
+                )}
+                {onSchedule && (
+                  <button
+                    type="button"
+                    onClick={() => onSchedule(selStore)}
+                    className="flex-1 py-1.5 px-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center justify-center gap-1 shadow transition cursor-pointer"
+                  >
+                    <Navigation className="w-3 h-3" />
+                    <span>Buat Jadwal</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()
+      )}
 
       <div ref={mapContainerRef} className="w-full h-full flex-1" style={{ width: '100%', height: '100%', minHeight: '100%' }} />
     </div>
   );
+
+  if (isFullscreen) {
+    return createPortal(mapElement, document.body);
+  }
+
+  return mapElement;
 };
