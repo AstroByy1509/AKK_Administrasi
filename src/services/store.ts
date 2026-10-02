@@ -994,6 +994,12 @@ class LogisticsStore {
     this.notify();
   }
 
+  public updateStore(id: string, updatedFields: Partial<RetailStore>): void {
+    this.stores = this.stores.map(s => s.id === id ? { ...s, ...updatedFields } : s);
+    this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    this.notify();
+  }
+
   public deleteStore(id: string): void {
     this.stores = this.stores.filter(s => s.id !== id);
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);

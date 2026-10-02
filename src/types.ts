@@ -94,6 +94,7 @@ export interface RetailStore {
   phone: string;
   deliveryWindow: string; // e.g. "08:00 - 17:00"
   storeCategory: 'Hypermarket' | 'Supermarket' | 'Distribution Hub' | 'Minimarket Cluster' | 'Toko Kelontong / Minimarket' | 'Horeca & Corporate' | 'Mitra Distributor' | 'Needs Correction';
+  priorityLevel?: 'High' | 'Medium' | 'Low';
 }
 
 export interface Schedule {

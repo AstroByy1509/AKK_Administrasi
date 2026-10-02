@@ -260,3 +260,18 @@ export function getStoreLocationType(store: { island?: string; city?: string; ad
 
   return 'luar_kota';
 }
+
+export function getStorePriorityLevel(store: any): 'High' | 'Medium' | 'Low' {
+  if (!store) return 'Low';
+  if (store.priorityLevel && ['High', 'Medium', 'Low'].includes(store.priorityLevel)) {
+    return store.priorityLevel as 'High' | 'Medium' | 'Low';
+  }
+  const category = store.storeCategory || '';
+  if (['Hypermarket', 'Supermarket', 'Distribution Hub', 'Horeca & Corporate'].includes(category)) {
+    return 'High';
+  }
+  if (['Minimarket Cluster', 'Mitra Distributor'].includes(category)) {
+    return 'Medium';
+  }
+  return 'Low';
+}

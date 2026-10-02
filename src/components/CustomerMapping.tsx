@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route, Maximize2, Minimize2 } from 'lucide-react';
+import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route, Maximize2, Minimize2, Star, Users, Target, Circle, Download, CheckCircle2, X } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
 import { GoogleSheetsStoreSyncModal } from './GoogleSheetsStoreSyncModal';
 import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
-import { extractCoordinatesFromObject, normalizeStoreWithCoordinates, getStoreLocationType } from '../utils/coordinateParser';
+import { extractCoordinatesFromObject, normalizeStoreWithCoordinates, getStoreLocationType, getStorePriorityLevel } from '../utils/coordinateParser';
+import { calculateDistanceKm } from '../utils/distance';
 
 interface CustomerMappingProps {
   onScheduleForStore?: (store: RetailStore) => void;
@@ -35,12 +36,123 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
   const [isMapFullscreen, setIsMapFullscreen] = useState<boolean>(false);
 
   const [showRoutes, setShowRoutes] = useState<boolean>(true);
+  const [priorityLayerFilter, setPriorityLayerFilter] = useState<'all' | 'high_priority'>('all');
   const [selectedIsland, setSelectedIsland] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState<RetailStore | null>(null);
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
   const [isGoogleSheetsSyncOpen, setIsGoogleSheetsSyncOpen] = useState(false);
+
+  // Dedicated Priority Level Checkbox Filters State
+  const [selectedPriorities, setSelectedPriorities] = useState<Set<'High' | 'Medium' | 'Low'>>(
+    new Set(['High', 'Medium', 'Low'])
+  );
+
+  const handlePriorityCheckboxToggle = (level: 'High' | 'Medium' | 'Low') => {
+    setSelectedPriorities(prev => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllPriorities = () => {
+    if (selectedPriorities.size === 3) {
+      setSelectedPriorities(new Set());
+    } else {
+      setSelectedPriorities(new Set(['High', 'Medium', 'Low']));
+    }
+  };
+
+  const priorityCounts = useMemo(() => {
+    const counts = { High: 0, Medium: 0, Low: 0 };
+    stores.forEach(st => {
+      const level = getStorePriorityLevel(st);
+      counts[level]++;
+    });
+    return counts;
+  }, [stores]);
+
+  const handleStorePriorityChange = (storeId: string, level: 'High' | 'Medium' | 'Low') => {
+    const storeToUpdate = stores.find(s => s.id === storeId);
+    if (!storeToUpdate) return;
+
+    const updatedStore = {
+      ...storeToUpdate,
+      priorityLevel: level
+    };
+
+    logisticsStore.updateStore(storeId, { priorityLevel: level });
+
+    setStores(prev => prev.map(s => s.id === storeId ? updatedStore : s));
+
+    if (selectedStore && selectedStore.id === storeId) {
+      setSelectedStore(updatedStore);
+    }
+
+    const now = new Date().toLocaleTimeString();
+    setDiagnosticLogs(prev => [
+      { id: 'diag-' + Date.now(), timestamp: now, message: `Mengubah prioritas "${storeToUpdate.storeName}" menjadi ${level}`, count: stores.length, level: 'success' },
+      ...prev
+    ]);
+  };
+
+  // Radius Search & GIS Proximity Analysis State
+  const [isRadiusMode, setIsRadiusMode] = useState<boolean>(false);
+  const [radiusKm, setRadiusKm] = useState<number>(10);
+  const [radiusCenter, setRadiusCenter] = useState<[number, number] | null>(CENTRAL_WAREHOUSE.coordinates);
+  const [radiusPivotLabel, setRadiusPivotLabel] = useState<string>('Gudang Banyuwangi DC (Pusat Logistik)');
+  const [enableClustering, setEnableClustering] = useState<boolean>(false);
+  const [forceMapUpdateKey, setForceMapUpdateKey] = useState<number>(0);
+
+  const handleMapClickForRadius = (coords: [number, number]) => {
+    setRadiusCenter(coords);
+    setRadiusPivotLabel(`Titik Peta (${coords[0].toFixed(4)}, ${coords[1].toFixed(4)})`);
+  };
+
+  const storesWithinRadius = useMemo(() => {
+    if (!radiusCenter) return [];
+    const [cLat, cLng] = radiusCenter;
+    return stores
+      .map(st => {
+        const lat = Number(st.latitude);
+        const lng = Number(st.longitude);
+        const distanceKm = calculateDistanceKm(cLat, cLng, lat, lng);
+        return { store: st, distanceKm };
+      })
+      .filter(item => item.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+  }, [stores, radiusCenter, radiusKm]);
+
+  const exportRadiusStoresToCSV = () => {
+    if (storesWithinRadius.length === 0) return;
+    const headers = ['Kode Toko', 'Nama Toko', 'Kategori', 'Kota', 'Pulau', 'Jarak dari Pusat (km)', 'Alamat', 'Telepon', 'Jendela Pengiriman'];
+    const rows = storesWithinRadius.map(item => [
+      item.store.storeCode,
+      `"${item.store.storeName.replace(/"/g, '""')}"`,
+      item.store.storeCategory,
+      item.store.city,
+      item.store.island,
+      item.distanceKm,
+      `"${item.store.address.replace(/"/g, '""')}"`,
+      item.store.phone || '-',
+      item.store.deliveryWindow
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Daftar_Toko_Radius_${radiusKm}km_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const runDiagnosticSync = async () => {
     setFetchStatus('fetching');
@@ -169,9 +281,14 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
         st.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         st.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
         st.storeCode.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesIsland && matchesCategory && matchesSearch;
+
+      const level = getStorePriorityLevel(st);
+      const matchesPriorityCheckbox = selectedPriorities.has(level);
+      const matchesPriorityLayer = priorityLayerFilter === 'all' || level === 'High';
+
+      return matchesIsland && matchesCategory && matchesSearch && matchesPriorityCheckbox && matchesPriorityLayer;
     });
-  }, [stores, selectedIsland, selectedCategory, searchQuery]);
+  }, [stores, selectedIsland, selectedCategory, searchQuery, selectedPriorities, priorityLayerFilter]);
 
   // Comprehensive Delivery Loop Polyline connecting ALL 15 stores
   const plannedPolylineCoords = useMemo(() => {
@@ -370,6 +487,134 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
         )}
       </div>
 
+      {/* Dedicated Priority Level Checkbox Filtering Interface */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <Filter className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-xs sm:text-sm flex items-center gap-2">
+                <span>Filter Tingkat Prioritas Pelanggan (Priority Level Checkboxes)</span>
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[11px] font-mono border border-blue-500/30 font-semibold">
+                  {selectedPriorities.size} dari 3 Tingkat Aktif
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Centang untuk menyaring visibility penanda toko di peta berdasarkan level prioritas distribusi.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAllPriorities}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{selectedPriorities.size === 3 ? 'Hapus Semua Centang' : 'Pilih Semua (High, Med, Low)'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+          {/* High Priority Checkbox */}
+          <label
+            onClick={() => handlePriorityCheckboxToggle('High')}
+            className={`flex items-center justify-between p-3 rounded-xl border transition cursor-pointer select-none ${
+              selectedPriorities.has('High')
+                ? 'bg-amber-500/15 border-amber-500/60 text-white ring-1 ring-amber-400/30 shadow-lg'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={selectedPriorities.has('High')}
+                onChange={() => {}}
+                className="w-4 h-4 rounded border-slate-700 text-amber-500 focus:ring-amber-400 focus:ring-offset-slate-900 cursor-pointer"
+              />
+              <div className="flex items-center gap-1.5">
+                <Star className={`w-4 h-4 ${selectedPriorities.has('High') ? 'text-amber-400 fill-amber-400' : 'text-slate-500'}`} />
+                <div>
+                  <div className="font-bold text-xs">High Priority (Tinggi)</div>
+                  <div className="text-[10px] text-slate-400">Hypermarket, Supermarket, Hub</div>
+                </div>
+              </div>
+            </div>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-bold ${
+              selectedPriorities.has('High') ? 'bg-amber-500/30 text-amber-300 border border-amber-400/30' : 'bg-slate-800 text-slate-500'
+            }`}>
+              {priorityCounts.High}
+            </span>
+          </label>
+
+          {/* Medium Priority Checkbox */}
+          <label
+            onClick={() => handlePriorityCheckboxToggle('Medium')}
+            className={`flex items-center justify-between p-3 rounded-xl border transition cursor-pointer select-none ${
+              selectedPriorities.has('Medium')
+                ? 'bg-indigo-500/15 border-indigo-500/60 text-white ring-1 ring-indigo-400/30 shadow-lg'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={selectedPriorities.has('Medium')}
+                onChange={() => {}}
+                className="w-4 h-4 rounded border-slate-700 text-indigo-500 focus:ring-indigo-400 focus:ring-offset-slate-900 cursor-pointer"
+              />
+              <div className="flex items-center gap-1.5">
+                <Building2 className={`w-4 h-4 ${selectedPriorities.has('Medium') ? 'text-indigo-400' : 'text-slate-500'}`} />
+                <div>
+                  <div className="font-bold text-xs">Medium Priority (Sedang)</div>
+                  <div className="text-[10px] text-slate-400">Minimarket Cluster, Distributor</div>
+                </div>
+              </div>
+            </div>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-bold ${
+              selectedPriorities.has('Medium') ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-400/30' : 'bg-slate-800 text-slate-500'
+            }`}>
+              {priorityCounts.Medium}
+            </span>
+          </label>
+
+          {/* Low Priority Checkbox */}
+          <label
+            onClick={() => handlePriorityCheckboxToggle('Low')}
+            className={`flex items-center justify-between p-3 rounded-xl border transition cursor-pointer select-none ${
+              selectedPriorities.has('Low')
+                ? 'bg-slate-800/90 border-slate-600 text-white ring-1 ring-slate-500/30 shadow-lg'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={selectedPriorities.has('Low')}
+                onChange={() => {}}
+                className="w-4 h-4 rounded border-slate-700 text-slate-400 focus:ring-slate-400 focus:ring-offset-slate-900 cursor-pointer"
+              />
+              <div className="flex items-center gap-1.5">
+                <Store className={`w-4 h-4 ${selectedPriorities.has('Low') ? 'text-slate-300' : 'text-slate-500'}`} />
+                <div>
+                  <div className="font-bold text-xs">Low Priority (Standar)</div>
+                  <div className="text-[10px] text-slate-400">Toko Kelontong & Outlet Kecil</div>
+                </div>
+              </div>
+            </div>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-bold ${
+              selectedPriorities.has('Low') ? 'bg-slate-700 text-slate-200 border border-slate-600' : 'bg-slate-800 text-slate-500'
+            }`}>
+              {priorityCounts.Low}
+            </span>
+          </label>
+        </div>
+      </div>
+
       {/* Main Map & Filter Area */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left: Map */}
@@ -411,6 +656,44 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                     <span>Layar Penuh (Fullscreen)</span>
                   </>
                 )}
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setIsRadiusMode(!isRadiusMode)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow ${
+                  isRadiusMode
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400 shadow-blue-500/20'
+                    : 'bg-slate-950 hover:bg-slate-800 text-slate-300'
+                } border border-slate-800`}
+                title="Aktifkan Cari Radius / Analisis Jangkauan Lingkar Toko"
+              >
+                <Target className="w-3.5 h-3.5 text-blue-400" />
+                <span>Radius Search ({radiusKm}km)</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setEnableClustering(!enableClustering)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow ${
+                  enableClustering
+                    ? 'bg-amber-600 text-white ring-2 ring-amber-400 shadow-amber-500/20'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                }`}
+                title={enableClustering ? 'Matikan Pengelompokan Klaster (Tampilkan Semua Pin Individual)' : 'Aktifkan Pengelompokan Klaster'}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                <span>{enableClustering ? 'Mode Klaster' : `Pin Individu (${filteredStores.length})`}</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setForceMapUpdateKey(prev => prev + 1)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 transition cursor-pointer flex items-center gap-1.5 shadow"
+                title="Paksa Perbarui & Muat Ulang Penanda Peta"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+                <span>Reset Penanda</span>
               </button>
 
               <button 
@@ -489,9 +772,227 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                 plannedPolyline={plannedPolylineCoords}
                 externalIsFullscreen={isMapFullscreen}
                 onToggleFullscreen={() => setIsMapFullscreen(!isMapFullscreen)}
+                priorityFilter={priorityLayerFilter}
+                onPriorityFilterChange={(f) => setPriorityLayerFilter(f)}
+                isRadiusMode={isRadiusMode}
+                radiusKm={radiusKm}
+                radiusCenter={radiusCenter}
+                onMapClickForRadius={handleMapClickForRadius}
+                enableClustering={enableClustering}
+                forceUpdateTrigger={forceMapUpdateKey}
+                selectedPriorities={selectedPriorities}
+                onTogglePriority={handlePriorityCheckboxToggle}
+                onChangeStorePriority={handleStorePriorityChange}
               />
             </div>
           </div>
+
+          {/* Radius Search & GIS Proximity Analysis Card */}
+          {isRadiusMode && (
+            <div className="bg-slate-900 border border-blue-500/60 rounded-xl p-4 shadow-2xl space-y-4 animate-card-fade-in text-xs text-slate-200">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800 flex-wrap gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white text-sm">Analisis Proksimitas Radius GIS</h3>
+                    <p className="text-[11px] text-slate-400">Pusat Acuan: <strong className="text-blue-300">{radiusPivotLabel}</strong></p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={exportRadiusStoresToCSV}
+                    disabled={storesWithinRadius.length === 0}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50 shadow"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Ekspor CSV ({storesWithinRadius.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsRadiusMode(false)}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+                    title="Tutup Panel Radius"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Pivot & Radius Selector Controls */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Pivot Center Selection */}
+                <div className="space-y-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  <span className="font-bold text-slate-300 text-[11px] uppercase tracking-wider block">1. Pilih Pusat Titik Radius</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRadiusCenter(CENTRAL_WAREHOUSE.coordinates);
+                        setRadiusPivotLabel('Gudang Banyuwangi DC (Pusat Logistik)');
+                      }}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                        radiusCenter && radiusCenter[0] === CENTRAL_WAREHOUSE.coordinates[0] && radiusCenter[1] === CENTRAL_WAREHOUSE.coordinates[1]
+                          ? 'bg-blue-600 text-white shadow ring-1 ring-blue-400'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      🏢 Gudang DC Banyuwangi
+                    </button>
+
+                    {selectedStore && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const lat = Number(selectedStore.latitude);
+                          const lng = Number(selectedStore.longitude);
+                          if (!isNaN(lat) && !isNaN(lng)) {
+                            setRadiusCenter([lat, lng]);
+                            setRadiusPivotLabel(`${selectedStore.storeName} (${selectedStore.storeCode})`);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                          radiusCenter && selectedStore && radiusCenter[0] === Number(selectedStore.latitude)
+                            ? 'bg-amber-600 text-white shadow ring-1 ring-amber-400'
+                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        🛍️ {selectedStore.storeName}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400 italic mt-1">
+                    💡 Klik di mana saja pada peta untuk menetapkan titik pusat lingkaran bebas.
+                  </p>
+                </div>
+
+                {/* Radius Distance Control */}
+                <div className="space-y-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-300 text-[11px] uppercase tracking-wider block">2. Ukuran Jangkauan Radius</span>
+                    <span className="font-mono font-extrabold text-blue-400 text-sm">{radiusKm} KM</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[2, 5, 10, 25, 50].map(km => (
+                      <button
+                        key={km}
+                        type="button"
+                        onClick={() => setRadiusKm(km)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition cursor-pointer ${
+                          radiusKm === km
+                            ? 'bg-blue-600 text-white shadow'
+                            : 'bg-slate-900 text-slate-400 hover:bg-slate-800 border border-slate-800'
+                        }`}
+                      >
+                        {km} km
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="100"
+                    step="1"
+                    value={radiusKm}
+                    onChange={(e) => setRadiusKm(Number(e.target.value))}
+                    className="w-full accent-blue-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer mt-1"
+                  />
+                </div>
+              </div>
+
+              {/* Summary Stats Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Toko Dalam Radius</span>
+                  <span className="text-base font-extrabold text-blue-400">{storesWithinRadius.length} Outlet</span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">Jangkauan ≤ {radiusKm} km</span>
+                </div>
+
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Toko Terdekat</span>
+                  <span className="text-sm font-bold text-emerald-400 truncate">
+                    {storesWithinRadius[0] ? `${storesWithinRadius[0].distanceKm} km` : '-'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 truncate">
+                    {storesWithinRadius[0] ? storesWithinRadius[0].store.storeName : 'Tidak ada toko'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Toko Terjauh</span>
+                  <span className="text-sm font-bold text-amber-400 truncate">
+                    {storesWithinRadius.length > 0 ? `${storesWithinRadius[storesWithinRadius.length - 1].distanceKm} km` : '-'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 truncate">
+                    {storesWithinRadius.length > 0 ? storesWithinRadius[storesWithinRadius.length - 1].store.storeName : '-'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Total Lingkar Jarak</span>
+                  <span className="text-sm font-bold text-indigo-400">
+                    {Math.round(storesWithinRadius.reduce((sum, item) => sum + item.distanceKm, 0) * 10) / 10} km
+                  </span>
+                  <span className="text-[10px] text-slate-500">Estimasi Kumulatif</span>
+                </div>
+              </div>
+
+              {/* Table / List of Stores within Radius */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                  <span>DAFTAR OUTLET DALAM RADIUS ({storesWithinRadius.length})</span>
+                  <span>Urut berdasarkan jarak terdekat</span>
+                </div>
+
+                {storesWithinRadius.length === 0 ? (
+                  <div className="p-6 text-center bg-slate-950 rounded-xl border border-slate-800 text-slate-500">
+                    Tidak ada toko pelanggan ditemukan dalam radius {radiusKm} km dari pusat acuan saat ini.
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1 font-sans">
+                    {storesWithinRadius.map(({ store, distanceKm }) => (
+                      <div
+                        key={store.id}
+                        onClick={() => setSelectedStore(store)}
+                        className={`p-2 rounded-xl border transition cursor-pointer flex items-center justify-between gap-3 ${
+                          selectedStore?.id === store.id
+                            ? 'bg-blue-950/80 border-blue-500 text-white shadow'
+                            : 'bg-slate-950 hover:bg-slate-850 border-slate-800 text-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-extrabold flex items-center justify-center text-[10px] shrink-0 border border-blue-500/30">
+                            {distanceKm}k
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                              <span>{store.storeName}</span>
+                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-slate-800 text-slate-400 font-mono">
+                                {store.storeCode}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {store.address} &bull; {store.city}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                            {distanceKm} km
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Selected Store Details & Store List */}
@@ -531,6 +1032,40 @@ export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForS
                   <span className="text-slate-400 text-[11px]">PIC Toko:</span>
                   <div className="font-semibold text-white mt-0.5">{selectedStore.contactPerson}</div>
                 </div>
+              </div>
+
+              {/* Atur Tingkat Prioritas Pelanggan (Priority Level Editor) */}
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+                  <Star className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Atur Tingkat Prioritas Pelanggan:</span>
+                </span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['High', 'Medium', 'Low'] as const).map((level) => {
+                    const active = getStorePriorityLevel(selectedStore) === level;
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => handleStorePriorityChange(selectedStore.id, level)}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-extrabold transition cursor-pointer text-center border ${
+                          active
+                            ? level === 'High'
+                              ? 'bg-amber-500 text-slate-950 border-amber-400 shadow shadow-amber-500/20'
+                              : level === 'Medium'
+                              ? 'bg-indigo-600 text-white border-indigo-400 shadow shadow-indigo-600/20'
+                              : 'bg-slate-700 text-white border-slate-500 shadow'
+                            : 'bg-slate-900 text-slate-400 hover:text-slate-200 border-slate-800'
+                        }`}
+                      >
+                        {level}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-normal italic">
+                  * Mengubah tingkat ini akan langsung memperbarui pin di peta dan indikator filter prioritas.
+                </p>
               </div>
 
               <div className="flex flex-col gap-2 pt-2">
