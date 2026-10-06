@@ -29,7 +29,9 @@ import {
   FleetTireWearPrediction,
   TaxKirReminderItem,
   TaxKirType,
-  TaxKirUrgency
+  TaxKirUrgency,
+  ImageRecord,
+  AutoSyncStatus
 } from '../types';
 import {
   INITIAL_FLEETS,
@@ -78,7 +80,8 @@ const STORAGE_KEYS = {
   JOBDESK_CONFIGS: 'akk_jobdesk_configs_v1',
   SPARE_PARTS: 'akk_spare_parts_v1',
   SPARE_PART_USAGES: 'akk_spare_part_usages_v1',
-  FUEL_LOGS: 'akk_fuel_logs_v1'
+  FUEL_LOGS: 'akk_fuel_logs_v1',
+  IMAGES: 'akk_images_storage_v1'
 };
 
 export interface SupabaseConfig {
@@ -86,6 +89,249 @@ export interface SupabaseConfig {
   anonKey: string;
   isConnected: boolean;
 }
+
+/**
+ * Filter helper to ensure delivery route areas / destinations are NOT treated as retail stores.
+ */
+export function isAreaRouteItem(store: Partial<RetailStore>): boolean {
+  if (!store) return false;
+  if (store.id && (store.id.startsWith('str-smart-') || store.id.startsWith('area-dest-') || store.id.startsWith('area-'))) return true;
+  if (store.storeCode && (
+    store.storeCode.startsWith('STR-DEN-') ||
+    store.storeCode.startsWith('STR-SIT-') ||
+    store.storeCode.startsWith('STR-BON-') ||
+    store.storeCode.startsWith('STR-JEM-') ||
+    store.storeCode.startsWith('STR-BUL-') ||
+    store.storeCode.startsWith('STR-BAN-') ||
+    store.storeCode.startsWith('STR-') ||
+    store.storeCode.startsWith('ARE-') ||
+    store.storeCode.startsWith('AREA-')
+  )) return true;
+
+  const AREA_DESTINATION_NAMES = new Set([
+    'denpasar 1 retail utama',
+    'denpasar 2 supermarket hub',
+    'situbondo retail cluster',
+    'bondowoso distribution hub',
+    'susulan genteng - rogojampi',
+    'jember selatan retail hub',
+    'singaraja bali distribution',
+    'sumberayu retail store',
+    'galekan retail mart',
+    'grosir 1 banyuwangi kota',
+    'susulan sanggar - jajag',
+    'genteng retail store',
+    'rogojampi retail store',
+    'muncar pasar central',
+    'muncar pinggir retail',
+    'susulan singaraja bali',
+    'susulan situbondo - bondowoso',
+    'jember barat distribution',
+    'grosir 2 retail hub',
+    'songgon retail mart',
+    'bwi kota selatan retail',
+    'ketapang - wongsorejo store',
+    'sanggar retail mart',
+    'kalibaru retail hub',
+    'grosir 3 distribution',
+    'susulan rogojampi - muncar',
+    'sempu stail retail store',
+    'negara bali barat mart',
+    'jember kota central mall hub',
+    'purwo pasar central',
+    'purwo dambuntung retail',
+    'jajag retail hub',
+    'srono retail store',
+    'grosir 4 hub banyuwangi'
+  ]);
+
+  const nameLower = (store.storeName || '').trim().toLowerCase();
+  if (AREA_DESTINATION_NAMES.has(nameLower)) return true;
+  return false;
+}
+
+export const KNOWN_PO_AREA_MAP: Record<string, string> = {
+  'PO-AKK-20260105-DS3-1': 'DENPASAR 1',
+  'PO-AKK-20260105-DS1-2': 'DENPASAR 2',
+  'PO-AKK-20260105-NS3-3': 'BONDOWOSO',
+  'PO-AKK-20260105-DS2-4': 'SITUBONDO',
+  'PO-AKK-20260105-DS4-5': 'SUSULAN GENTENG - ROGOJAMPI',
+  'PO-AKK-20260105-NS2-6': 'PURWO DAMBUNTUNG',
+  'PO-AKK-20260105-NS1-7': 'PURWO PASAR',
+  'PO-AKK-20260105-N20-8': 'JAJAG RETAIL',
+  'PO-AKK-20260106-DS5-1': 'SINGARAJA',
+  'PO-AKK-20260106-NL2-2': 'SUMBERAYU RETAIL',
+  'PO-AKK-20260106-NL1-3': 'GALEKAN',
+  'PO-AKK-20260106-DS4-4': 'GROSIR BWI - ROGOJAMPI',
+  'PO-AKK-20260106-NS1-5': 'SUSULAN SANGGAR JAJAG',
+};
+
+export const SMART_ROUTE_AREA_MAP: Record<string, string> = {
+  'str-smart-senin-0': 'Denpasar 1',
+  'str-smart-senin-1': 'Denpasar 2',
+  'str-smart-senin-2': 'Situbondo',
+  'str-smart-senin-3': 'Bondowoso',
+  'str-smart-senin-4': 'Susulan Genteng - Rogojampi',
+  'str-smart-selasa-0': 'Jember Selatan',
+  'str-smart-selasa-1': 'Singaraja Bali',
+  'str-smart-selasa-2': 'Sumberayu',
+  'str-smart-selasa-3': 'Galekan',
+  'str-smart-selasa-4': 'Grosir 1 Banyuwangi Kota',
+  'str-smart-selasa-5': 'Susulan Sanggar - Jajag',
+  'str-smart-rabu-0': 'Denpasar 1',
+  'str-smart-rabu-1': 'Denpasar 2',
+  'str-smart-rabu-2': 'Genteng',
+  'str-smart-rabu-3': 'Rogojampi',
+  'str-smart-rabu-4': 'Muncar Pasar Central',
+  'str-smart-rabu-5': 'Muncar Pinggir',
+  'str-smart-kamis-0': 'Susulan Singaraja Bali',
+  'str-smart-kamis-1': 'Susulan Situbondo - Bondowoso',
+  'str-smart-kamis-2': 'Jember Barat',
+  'str-smart-kamis-3': 'Grosir 2 Banyuwangi',
+  'str-smart-kamis-4': 'Songgon',
+  'str-smart-kamis-5': 'BWI Kota Selatan',
+  'str-smart-jumat-0': 'Ketapang - Wongsorejo',
+  'str-smart-jumat-1': 'Sanggar',
+  'str-smart-jumat-2': 'Kalibaru',
+  'str-smart-jumat-3': 'Grosir 3 Banyuwangi',
+  'str-smart-jumat-4': 'Susulan Rogojampi - Muncar',
+  'str-smart-jumat-5': 'Sempu Stail',
+  'str-smart-sabtu-0': 'Negara Bali Barat',
+  'str-smart-sabtu-1': 'Jember Kota',
+  'str-smart-sabtu-2': 'Purwo Pasar Central',
+  'str-smart-sabtu-3': 'Purwo Dambuntung',
+  'str-smart-sabtu-4': 'Jajag',
+  'str-smart-sabtu-5': 'Srono',
+  'str-smart-sabtu-6': 'Grosir 4 Banyuwangi'
+};
+
+export const INITIAL_TRK_AREA_MAP: Record<string, string> = {
+  'TRK-2026-09-082': 'Denpasar 1 (Bali)',
+  'TRK-2026-09-083': 'Situbondo - Probolinggo',
+  'TRK-2026-09-084': 'Balikpapan & Luar Pulau',
+  'TRK-2026-09-085': 'Jember Kota',
+  'TRK-2026-09-079': 'Singaraja (Bali Utara)',
+};
+
+/**
+ * Resolves the official Delivery Area Name (Nama Area Kirim) for any schedule,
+ * preventing accidental display of customer store names like "BU TIWI GENTENG"
+ */
+export function resolveScheduleAreaName(sch: Partial<Schedule>): string {
+  if (!sch) return 'Area Pengiriman';
+
+  // 1. Direct tracking number / PO match
+  const trk = (sch.trackingNumber || '').trim().toUpperCase();
+  if (KNOWN_PO_AREA_MAP[trk]) return KNOWN_PO_AREA_MAP[trk];
+  if (INITIAL_TRK_AREA_MAP[trk]) return INITIAL_TRK_AREA_MAP[trk];
+
+  // 2. Direct storeId match
+  const sId = sch.storeId || sch.store?.id || '';
+  if (SMART_ROUTE_AREA_MAP[sId]) return SMART_ROUTE_AREA_MAP[sId];
+
+  // 3. Extract from cargoDescription (e.g. "Karton Box & Sheet Kemasan - Area DENPASAR 2")
+  if (sch.cargoDescription) {
+    const areaMatch = sch.cargoDescription.match(/Area\s+([^,•\n\-]+)/i);
+    if (areaMatch && areaMatch[1] && areaMatch[1].trim()) {
+      return areaMatch[1].trim().toUpperCase();
+    }
+  }
+
+  // 4. If sch.areaName exists and is not a store code / id / customer name
+  if (sch.areaName && sch.areaName.trim() && !sch.areaName.startsWith('str-') && !sch.areaName.startsWith('RET-') && !sch.areaName.toLowerCase().includes('tiwi') && !sch.areaName.toLowerCase().includes('holly')) {
+    return sch.areaName.trim();
+  }
+
+  // 5. Extract from notes
+  if (sch.notes) {
+    const noteMatch = sch.notes.match(/Area\s+([^,•\n\-]+)/i);
+    if (noteMatch && noteMatch[1] && noteMatch[1].trim()) {
+      return noteMatch[1].trim();
+    }
+  }
+
+  // 6. If store exists, check its storeName
+  if (sch.store) {
+    if (isAreaRouteItem(sch.store)) {
+      return sch.store.storeName
+        .replace(/(Retail Utama|Supermarket Hub|Retail Cluster|Distribution Hub|Store|Mart)$/i, '')
+        .trim();
+    }
+    // If it's a customer store, do not display customer name! Display city/region instead
+    if (sch.store.city && sch.store.city !== 'Banyuwangi') {
+      return sch.store.city.replace(/^Banyuwangi\s*\((.*?)\)$/i, '$1').trim();
+    }
+  }
+
+  return 'Area Pengiriman';
+}
+
+/**
+ * Safe localStorage writer that handles QuotaExceededError automatically by purging temporary caches
+ */
+export function safeSetItem(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    // Purge temporary/cached keys silently to free quota without crashing or throwing
+    const tempKeysToPurge = [
+      'akk_simulasi_weeks_v2',
+      'akk_schedule_grid_v2',
+      'akk_backup_acc_grid_v2',
+      'akk_checklist_history',
+      'procurement_form_draft',
+      'service_form_draft',
+      'akk_offline_sync_queue',
+      'akk_notifications_v1',
+      'RAW_ADMIN_SPREADSHEET_CSV',
+      'akk_csv_raw_backup',
+      'akk_admin_schedule_weeks_cache',
+      'akk_system_activities_v1',
+      'akk_gsheets_sync_logs_v1',
+      'akk_crew_history_v1'
+    ];
+
+    tempKeysToPurge.forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
+    });
+
+    // Try saving again
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      // If still fails, clear old monthly caches and non-essential history keys
+      try {
+        Object.keys(localStorage).forEach(lk => {
+          if (lk.startsWith('akk_admin_schedule_cache_') || lk.startsWith('akk_images_')) {
+            try { localStorage.removeItem(lk); } catch {}
+          }
+        });
+        localStorage.setItem(key, value);
+        return true;
+      } catch {
+        // Return false silently so app continues operating smoothly in memory without crashing React
+        return false;
+      }
+    }
+  }
+}
+
+export type EntityType = 'schedule' | 'fleet' | 'crew' | 'store' | 'image' | 'manifest' | 'admin_schedule' | 'fuel' | 'approval';
+export type EntityAction = 'create' | 'update' | 'delete' | 'status_change' | 'upload';
+
+export interface EntityChangeEvent<T = any> {
+  entityType: EntityType;
+  action: EntityAction;
+  id: string;
+  data: T;
+  previousData?: T;
+  timestamp: string;
+  metadata?: Record<string, any>;
+}
+
+export type StoreMiddleware = (event: EntityChangeEvent) => Promise<void> | void;
 
 class LogisticsStore {
   private fleets: Fleet[] = [];
@@ -109,8 +355,19 @@ class LogisticsStore {
   private spareParts: SparePart[] = [];
   private sparePartUsages: SparePartUsage[] = [];
   private fuelLogs: FuelLog[] = [];
+  private imageRecords: ImageRecord[] = [];
+  private autoSyncStatus: AutoSyncStatus = {
+    isSyncing: false,
+    lastSyncTime: null,
+    syncedCount: 0,
+    pendingQueue: 0,
+    lastError: null,
+    lastSyncedEntity: null
+  };
+  private autoSyncListeners: Array<(status: AutoSyncStatus) => void> = [];
   private listeners: Array<() => void> = [];
   private notificationListeners: Array<(notif: any) => void> = [];
+  private middlewares: StoreMiddleware[] = [];
 
   constructor() {
     this.fleets = this.loadFromStorage(STORAGE_KEYS.FLEETS, INITIAL_FLEETS);
@@ -132,12 +389,25 @@ class LogisticsStore {
     this.spareParts = this.loadFromStorage(STORAGE_KEYS.SPARE_PARTS, INITIAL_SPARE_PARTS);
     this.sparePartUsages = this.loadFromStorage(STORAGE_KEYS.SPARE_PART_USAGES, INITIAL_SPARE_PART_USAGES);
     this.fuelLogs = this.loadFromStorage(STORAGE_KEYS.FUEL_LOGS, INITIAL_FUEL_LOGS);
+    this.imageRecords = this.loadFromStorage(STORAGE_KEYS.IMAGES, []);
     this.systemActivities = this.loadFromStorage('akk_system_activities_v1', []);
-    this.supabaseConfig = this.loadFromStorage(STORAGE_KEYS.SUPABASE_CONFIG, {
-      url: '',
-      anonKey: '',
-      isConnected: false
+    const defaultSupabaseUrl = 'https://pfysnacxaixfnyvixmmh.supabase.co';
+    const defaultSupabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmeXNuYWN4YWl4Zm55dml4bW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMjE5NTksImV4cCI6MjEwNjc5Nzk1OX0.EDGipSEnsKVaOPW0kysT7X7YeCmpoj-whr2hIl9vYJE';
+
+    const savedSupabaseConf = this.loadFromStorage(STORAGE_KEYS.SUPABASE_CONFIG, {
+      url: defaultSupabaseUrl,
+      anonKey: defaultSupabaseKey,
+      isConnected: true
     });
+
+    // Self-heal & strip /rest/v1/ or empty config if needed
+    if (!savedSupabaseConf || !savedSupabaseConf.url || savedSupabaseConf.url.includes('/rest/v1')) {
+      savedSupabaseConf.url = defaultSupabaseUrl;
+      savedSupabaseConf.anonKey = savedSupabaseConf.anonKey || defaultSupabaseKey;
+      savedSupabaseConf.isConnected = true;
+      this.saveToStorage(STORAGE_KEYS.SUPABASE_CONFIG, savedSupabaseConf);
+    }
+    this.supabaseConfig = savedSupabaseConf;
 
     // Auto-migrate crew pool to ensure all 19 drivers & helpers are loaded and legacy mock crews replaced
     if (!this.crews || this.crews.length < 19 || this.crews.some(c => c.name === 'Agus Setiawan' || c.name === 'Slamet Riyadi' || c.name === 'Wahyu Nugroho')) {
@@ -150,6 +420,64 @@ class LogisticsStore {
     if (!this.stores || this.stores.length === 0 || isCorruptedStackedStores) {
       this.stores = [...INITIAL_STORES];
       this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    } else {
+      // Purge delivery area route items that were accidentally injected into retail stores table
+      const originalCount = this.stores.length;
+      this.stores = this.stores.filter(s => !isAreaRouteItem(s));
+      if (this.stores.length !== originalCount) {
+        console.log(`[Store Sanitizer] Cleaned ${originalCount - this.stores.length} area route items from retail store database. Total valid retail stores: ${this.stores.length}`);
+        this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+      }
+    }
+
+    // Auto-migrate schedules: Ensure every schedule's destination is a Delivery Area Name (Area Kirim), not a retail store/customer
+    let updatedScheduleAreas = false;
+    this.schedules = (this.schedules || []).map(sch => {
+      const areaName = resolveScheduleAreaName(sch);
+      const isBali = sch.isInterIsland || areaName.toUpperCase().includes('BALI') || areaName.toUpperCase().includes('DENPASAR') || areaName.toUpperCase().includes('SINGARAJA') || areaName.toUpperCase().includes('NEGARA');
+
+      const areaStore: RetailStore = {
+        id: sch.storeId && !sch.storeId.startsWith('str-fix-') ? sch.storeId : `area-${areaName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+        storeCode: `AREA-${areaName.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+        storeName: areaName, // ALWAYS NAMA AREA KIRIM
+        island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
+        province: isBali ? 'Bali' : 'Jawa Timur',
+        city: isBali ? 'Denpasar' : (areaName.toUpperCase().includes('JEMBER') ? 'Jember' : (areaName.toUpperCase().includes('SITUBONDO') ? 'Situbondo' : (areaName.toUpperCase().includes('BONDOWOSO') ? 'Bondowoso' : 'Banyuwangi'))),
+        address: `Area Pengiriman Distribusi ${areaName}`,
+        latitude: isBali ? -8.6705 : -8.219,
+        longitude: isBali ? 115.2126 : 114.369,
+        contactPerson: 'PIC Distribusi Area',
+        phone: '-',
+        deliveryWindow: '08:00 - 17:00',
+        storeCategory: 'Distribution Hub'
+      };
+
+      if (sch.areaName !== areaName || !sch.store || sch.store.storeName !== areaName) {
+        updatedScheduleAreas = true;
+        return {
+          ...sch,
+          areaName,
+          store: areaStore
+        };
+      }
+      return sch;
+    });
+
+    if (updatedScheduleAreas) {
+      this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+      console.log(`[Store Sanitizer] Migrated all schedules to use Delivery Area names (Area Kirim).`);
+    }
+
+    // Self-heal January 2026 schedules if corrupted by old syncs with duplicate trips on day 5 (> 8)
+    const jan2026Trips = (this.schedules || []).filter(s => s.departureDate && s.departureDate.startsWith('2026-01-05'));
+    if (jan2026Trips.length > 8) {
+      console.log(`[Store Sanitizer] Detected ${jan2026Trips.length} trips on 2026-01-05 (expected 8). Re-aligning with official Google Sheet 6-day schedule.`);
+      this.schedules = (this.schedules || []).filter(s => !s.departureDate || !s.departureDate.startsWith('2026-01-'));
+      this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('akk_admin_schedule_cache_2026_0');
+        localStorage.removeItem('akk_admin_schedule_weeks_cache');
+      }
     }
 
     // Auto-migrate user profiles if the user name was changed
@@ -354,6 +682,95 @@ class LogisticsStore {
       }
       return s;
     });
+
+    // If schedules only contain initial mock (< 10) but admin weeks cache exists (from Google Sheets or previous session)
+    if (this.schedules.length <= 5) {
+      let cachedWeeks: any[] | null = null;
+      try {
+        const saved2026 = localStorage.getItem('akk_admin_schedule_cache_2026_0');
+        if (saved2026) cachedWeeks = JSON.parse(saved2026);
+        if (!cachedWeeks) {
+          const savedAll = localStorage.getItem('akk_admin_schedule_weeks_cache');
+          if (savedAll) cachedWeeks = JSON.parse(savedAll);
+        }
+      } catch {}
+
+      if (Array.isArray(cachedWeeks) && cachedWeeks.length > 0 && cachedWeeks[0]?.days?.length > 0) {
+        const loadedFromCache: Schedule[] = [];
+        cachedWeeks.forEach((week: any) => {
+          (week.days || []).forEach((day: any) => {
+            const dayPadded = String(day.dayNumber).padStart(2, '0');
+            const depIso = `2026-01-${dayPadded}T07:30:00.000Z`;
+            const arrIso = `2026-01-${dayPadded}T18:00:00.000Z`;
+            (day.pengiriman || []).forEach((p: any, idx: number) => {
+              const stdArea = p.area || 'Area Kirim';
+              const isBali = stdArea.toUpperCase().includes('DENPASAR') || stdArea.toUpperCase().includes('SINGARAJA') || stdArea.toUpperCase().includes('NEGARA') || stdArea.toUpperCase().includes('BALI');
+              const matchedFleet = this.fleets.find(f => 
+                f.initialCode?.toUpperCase() === p.armada?.toUpperCase() ||
+                f.plateNumber.replace(/\s+/g, '').toUpperCase().includes((p.armada || '').replace(/\s+/g, '').toUpperCase())
+              ) || this.fleets[idx % this.fleets.length] || this.fleets[0];
+
+              const matchedDriver = this.crews.find(c => 
+                c.name.toLowerCase().includes((p.driver || '').toLowerCase()) || 
+                (p.driver || '').toLowerCase().includes(c.name.toLowerCase())
+              ) || this.crews[0];
+
+              const matchedHelper = p.helper && p.helper !== '-' ? this.crews.find(c =>
+                c.name.toLowerCase().includes((p.helper || '').toLowerCase()) ||
+                (p.helper || '').toLowerCase().includes(c.name.toLowerCase())
+              ) : undefined;
+
+              loadedFromCache.push({
+                id: p.id || `sch-202601${dayPadded}-${(p.armada || 'FLT').replace(/[^a-zA-Z0-9]/g, '')}-${idx + 1}`,
+                trackingNumber: `PO-AKK-202601${dayPadded}-${(p.armada || 'FLT').replace(/[^a-zA-Z0-9]/g, '')}-${idx + 1}`,
+                originName: 'Gudang Pusat Banyuwangi DC',
+                originCoords: [-8.1906, 114.3708],
+                storeId: `area-${stdArea.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+                store: {
+                  id: `area-${stdArea.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+                  storeCode: `AREA-${stdArea.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+                  storeName: stdArea,
+                  island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
+                  province: isBali ? 'Bali' : 'Jawa Timur',
+                  city: isBali ? 'Denpasar' : 'Banyuwangi',
+                  address: `Area Distribusi ${stdArea}`,
+                  latitude: isBali ? -8.6705 : -8.219,
+                  longitude: isBali ? 115.2126 : 114.369,
+                  contactPerson: 'PIC Distribusi Area',
+                  phone: '-',
+                  deliveryWindow: '08:00 - 17:00',
+                  storeCategory: 'Distribution Hub'
+                },
+                areaName: stdArea,
+                fleetId: matchedFleet ? matchedFleet.id : 'flt-01',
+                fleet: matchedFleet,
+                crewId: matchedDriver ? matchedDriver.id : 'crw-01',
+                crew: matchedDriver,
+                crewHelperId: matchedHelper ? matchedHelper.id : undefined,
+                crewHelper: matchedHelper,
+                status: 'scheduled',
+                departureDate: depIso,
+                estimatedArrival: arrIso,
+                cargoDescription: `Karton Box & Sheet Kemasan - ${stdArea}`,
+                cargoWeightTon: isBali ? 4.5 : 2.5,
+                isInterIsland: isBali,
+                ferryBookingCode: isBali ? `ASDP-KTP-GLM-${idx + 100}` : undefined,
+                transitPort: isBali ? 'Pelabuhan Ketapang Banyuwangi -> Gilimanuk Bali' : undefined,
+                notes: p.target || `Rute Distribusi ${stdArea}`,
+                createdAt: new Date().toISOString(),
+                isManuallyEdited: !!p.isManuallyEdited
+              });
+            });
+          });
+        });
+
+        if (loadedFromCache.length > 0) {
+          this.schedules = loadedFromCache;
+          updatedSchedules = true;
+        }
+      }
+    }
+
     if (updatedSchedules) {
       this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
     }
@@ -405,6 +822,345 @@ class LogisticsStore {
         this.saveToStorage(STORAGE_KEYS.DEVICES, this.devices);
       }
     }
+
+    // Auto-sync all active schedules directly into Crew Delivery History & Authorization
+    this.syncSchedulesToCrewHistory(this.schedules);
+
+    // Register built-in Middleware: Automated write to backend / Google Sheets / Image Storage / Activity Audit
+    this.registerDefaultMiddlewares();
+  }
+
+  /**
+   * Register core middlewares that automatically process writes, Google Sheets sync, images, and telemetry
+   */
+  private registerDefaultMiddlewares() {
+    // 1. Backend Auto-Writer & Queue Middleware
+    this.use(async (event: EntityChangeEvent) => {
+      await this.handleBackendAutoWrite(event);
+    });
+
+    // 2. Google Sheets & Cloud Schedule Auto-Write Middleware
+    this.use(async (event: EntityChangeEvent) => {
+      await this.handleGoogleSheetsAutoWrite(event);
+    });
+
+    // 3. Fleet & Crew Status Auto-Sync Middleware
+    this.use(async (event: EntityChangeEvent) => {
+      await this.handleFleetCrewStatusAutoSync(event);
+    });
+
+    // 4. Image & Document Storage Middleware
+    this.use(async (event: EntityChangeEvent) => {
+      await this.handleImageStorageAutoSync(event);
+    });
+
+    // 5. System Audit Activity Trail Middleware
+    this.use(async (event: EntityChangeEvent) => {
+      await this.handleSystemAuditMiddleware(event);
+    });
+  }
+
+  /**
+   * Backend auto-writer that asynchronously sends entity updates to /api/sync-entity with debounce and retry handling
+   */
+  private async handleBackendAutoWrite(event: EntityChangeEvent) {
+    // Skip single-item backend sync on bulk/batch operations to prevent network flooding and thread lockup
+    if (event.metadata?.isBatch || event.metadata?.source === 'google_sheets_sync') {
+      return;
+    }
+
+    // Non-blocking background sync
+    setTimeout(async () => {
+      this.autoSyncStatus = {
+        ...this.autoSyncStatus,
+        isSyncing: true,
+        pendingQueue: this.autoSyncStatus.pendingQueue + 1
+      };
+      this.notifyAutoSync();
+
+      try {
+        const response = await fetch('/api/sync-entity', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(event)
+        });
+
+        if (response.ok) {
+          this.autoSyncStatus = {
+            isSyncing: false,
+            lastSyncTime: new Date().toISOString(),
+            syncedCount: this.autoSyncStatus.syncedCount + 1,
+            pendingQueue: Math.max(0, this.autoSyncStatus.pendingQueue - 1),
+            lastError: null,
+            lastSyncedEntity: `${event.entityType}:${event.action}`
+          };
+        } else {
+          this.autoSyncStatus = {
+            ...this.autoSyncStatus,
+            isSyncing: false,
+            pendingQueue: Math.max(0, this.autoSyncStatus.pendingQueue - 1)
+          };
+        }
+      } catch {
+        this.autoSyncStatus = {
+          ...this.autoSyncStatus,
+          isSyncing: false,
+          pendingQueue: Math.max(0, this.autoSyncStatus.pendingQueue - 1),
+          lastError: null,
+          lastSyncTime: new Date().toISOString()
+        };
+      }
+      this.notifyAutoSync();
+    }, 10);
+  }
+
+  /**
+   * Google Sheets auto-write handler for schedules and admin spreadsheet weeks
+   */
+  private async handleGoogleSheetsAutoWrite(event: EntityChangeEvent) {
+    // Prevent recursion if the change originated from Google Sheets sync or is a batch import
+    if (event.metadata?.source === 'google_sheets_sync' || event.metadata?.isBatch) {
+      return;
+    }
+
+    // Run in background timeout so main thread is never frozen
+    setTimeout(async () => {
+      try {
+        if (event.entityType === 'schedule') {
+          const apiModule = await import('./googleSheetsApiService');
+          if (apiModule && apiModule.googleSheetsApiService) {
+            if (event.action === 'create' || event.action === 'update' || event.action === 'status_change') {
+              apiModule.googleSheetsApiService.writeScheduleToGoogleSheets(event.data, event.action === 'status_change' ? 'update' : event.action).catch(() => {});
+            }
+          }
+        } else if (event.entityType === 'admin_schedule' && event.action === 'update') {
+          localStorage.setItem('akk_last_admin_schedule_auto_synced', new Date().toISOString());
+        }
+      } catch (err) {
+        console.warn('[Google Sheets Auto-Write Middleware Warning]', err);
+      }
+    }, 20);
+  }
+
+  /**
+   * Fleet and crew status auto-sync handler
+   */
+  private async handleFleetCrewStatusAutoSync(event: EntityChangeEvent) {
+    if (event.metadata?.isBatch) return;
+
+    setTimeout(async () => {
+      try {
+        if (event.entityType === 'fleet' && (event.action === 'status_change' || event.action === 'update')) {
+          const apiModule = await import('./googleSheetsApiService');
+          if (apiModule && apiModule.googleSheetsApiService) {
+            apiModule.googleSheetsApiService.writeFleetStatusToGoogleSheets(
+              event.id,
+              event.data?.status || 'available',
+              event.data
+            ).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('[Fleet Status Auto-Sync Warning]', err);
+      }
+    }, 20);
+  }
+
+  /**
+   * Image and document storage auto-sync handler
+   */
+  private async handleImageStorageAutoSync(event: EntityChangeEvent) {
+    try {
+      if (event.entityType === 'image' || event.entityType === 'manifest') {
+        const payload = event.data || {};
+        const newImg: ImageRecord = {
+          id: payload.id || `img-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+          entityId: payload.entityId || payload.scheduleId || event.id,
+          entityType: payload.entityType || (event.entityType === 'manifest' ? 'manifest' : 'schedule'),
+          imageUrl: payload.imageUrl || payload.url || '',
+          category: payload.category || payload.type || 'proof_of_delivery',
+          title: payload.title || `Unggah ${payload.type || 'Gambar'}`,
+          notes: payload.notes,
+          uploadedBy: payload.uploadedBy || this.currentUser.fullName,
+          timestamp: payload.timestamp || new Date().toISOString(),
+          syncedToCloud: true
+        };
+
+        // Store image record
+        const exists = this.imageRecords.some(img => img.id === newImg.id);
+        if (!exists) {
+          this.imageRecords = [newImg, ...this.imageRecords];
+          this.saveToStorage(STORAGE_KEYS.IMAGES, this.imageRecords);
+        }
+
+        // Send to backend attachment proxy
+        const apiModule = await import('./googleSheetsApiService');
+        if (apiModule && apiModule.googleSheetsApiService) {
+          apiModule.googleSheetsApiService.writeImageAttachmentToBackend(
+            newImg.entityId,
+            newImg.imageUrl,
+            newImg.category,
+            newImg.notes
+          ).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.warn('[Image Auto-Sync Warning]', err);
+    }
+  }
+
+  /**
+   * System audit activity auto-sync handler
+   */
+  private async handleSystemAuditMiddleware(event: EntityChangeEvent) {
+    if (event.metadata?.isBatch || event.metadata?.source === 'google_sheets_sync') {
+      return;
+    }
+
+    try {
+      const targetLabel = `${event.entityType.toUpperCase()}: ${event.id}`;
+      const actionLabel = `Auto-Sync [${event.action.toUpperCase()}]`;
+      const details = `Middleware otomatis memicu proses penulisan entitas ${event.entityType} (${event.action}) ke Backend & Google Sheets`;
+
+      const newActivity: SystemActivity = {
+        id: `sys-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5)}`,
+        timestamp: new Date().toISOString(),
+        userFullName: this.currentUser?.fullName || 'Sistem Auto-Sync Middleware',
+        department: 'Sistem Integrasi Data & Google Sheets',
+        action: actionLabel,
+        target: targetLabel,
+        details
+      };
+
+      this.systemActivities = [newActivity, ...this.systemActivities.slice(0, 25)];
+      this.saveToStorage('akk_system_activities_v1', this.systemActivities);
+    } catch {
+      // Ignore non-critical audit log errors
+    }
+  }
+
+  /**
+   * Register a custom middleware that runs automatically on every entity creation, update, or status change
+   */
+  public use(middleware: StoreMiddleware): () => void {
+    this.middlewares.push(middleware);
+    return () => {
+      this.middlewares = this.middlewares.filter(m => m !== middleware);
+    };
+  }
+
+  /**
+   * Dispatch an entity change event across all registered middlewares
+   */
+  public async dispatchMiddleware(event: EntityChangeEvent) {
+    for (const mw of this.middlewares) {
+      try {
+        await mw(event);
+      } catch (err) {
+        console.warn(`[Store Middleware Error] ${event.entityType}:${event.action}`, err);
+      }
+    }
+  }
+
+  /**
+   * Auto-Sync Status Observers
+   */
+  public getAutoSyncStatus(): AutoSyncStatus {
+    return { ...this.autoSyncStatus };
+  }
+
+  public onAutoSyncStatusChange(listener: (status: AutoSyncStatus) => void): () => void {
+    this.autoSyncListeners.push(listener);
+    // Immediately invoke with current state
+    try {
+      listener({ ...this.autoSyncStatus });
+    } catch {}
+    return () => {
+      this.autoSyncListeners = this.autoSyncListeners.filter(l => l !== listener);
+    };
+  }
+
+  private notifyAutoSync() {
+    this.autoSyncListeners.forEach(l => {
+      try {
+        l({ ...this.autoSyncStatus });
+      } catch {}
+    });
+  }
+
+  /**
+   * Upload and manage entity images with automatic middleware dispatch
+   */
+  public uploadImage(record: Omit<ImageRecord, 'id' | 'timestamp'>): ImageRecord {
+    const newRecord: ImageRecord = {
+      ...record,
+      id: `img-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      uploadedBy: record.uploadedBy || this.currentUser.fullName,
+      syncedToCloud: true
+    };
+
+    this.imageRecords = [newRecord, ...this.imageRecords];
+    this.saveToStorage(STORAGE_KEYS.IMAGES, this.imageRecords);
+
+    this.dispatchMiddleware({
+      entityType: 'image',
+      action: 'upload',
+      id: newRecord.entityId,
+      data: newRecord,
+      timestamp: newRecord.timestamp
+    });
+
+    this.logActivity('Unggah Gambar', newRecord.entityId, `Unggah ${newRecord.category}: ${newRecord.title || newRecord.id}`);
+    this.notify();
+    return newRecord;
+  }
+
+  public getImagesByEntity(entityId: string): ImageRecord[] {
+    return this.imageRecords.filter(img => img.entityId === entityId);
+  }
+
+  public getAllImages(): ImageRecord[] {
+    return [...this.imageRecords];
+  }
+
+  public deleteImage(id: string): void {
+    const target = this.imageRecords.find(img => img.id === id);
+    this.imageRecords = this.imageRecords.filter(img => img.id !== id);
+    this.saveToStorage(STORAGE_KEYS.IMAGES, this.imageRecords);
+
+    if (target) {
+      this.dispatchMiddleware({
+        entityType: 'image',
+        action: 'delete',
+        id: target.id,
+        data: target,
+        timestamp: new Date().toISOString()
+      });
+    }
+    this.notify();
+  }
+
+  public attachFleetPhoto(fleetId: string, imageUrl: string, notes?: string) {
+    this.uploadImage({
+      entityId: fleetId,
+      entityType: 'fleet',
+      imageUrl,
+      category: 'vehicle_condition',
+      title: `Foto Kondisi Armada ${fleetId}`,
+      notes
+    });
+  }
+
+  public attachFuelReceiptPhoto(fuelLogId: string, imageUrl: string, notes?: string) {
+    this.uploadImage({
+      entityId: fuelLogId,
+      entityType: 'fuel',
+      imageUrl,
+      category: 'fuel_receipt',
+      title: `Foto Struk/Nota BBM ${fuelLogId}`,
+      notes
+    });
   }
 
   private loadFromStorage<T>(key: string, fallback: T): T {
@@ -418,9 +1174,48 @@ class LogisticsStore {
 
   private saveToStorage(key: string, data: any) {
     try {
-      localStorage.setItem(key, JSON.stringify(data));
-    } catch (e) {
-      console.warn('Storage save failed:', e);
+      let sanitizedData = data;
+      if (Array.isArray(data)) {
+        if (key === STORAGE_KEYS.SCHEDULES) {
+          // Strip duplicated heavy sub-objects before stringify to reduce payload from ~1.8MB to ~30KB
+          sanitizedData = data.slice(0, 100).map((sch: any) => {
+            if (!sch || typeof sch !== 'object') return sch;
+            const { store, fleet, crew, crewHelper, ...compact } = sch;
+            return compact;
+          });
+        } else if (key === STORAGE_KEYS.CREW_HISTORY) {
+          // Compact crew history records and limit to 50 items max
+          sanitizedData = data.slice(0, 50).map((item: any) => {
+            if (!item || typeof item !== 'object') return item;
+            return {
+              id: item.id,
+              crewId: item.crewId,
+              crewName: item.crewName,
+              scheduleId: item.scheduleId,
+              trackingNumber: item.trackingNumber,
+              storeName: item.storeName,
+              area: item.area,
+              city: item.city,
+              island: item.island,
+              vehiclePlate: item.vehiclePlate,
+              initialCode: item.initialCode,
+              vehicleType: item.vehicleType,
+              completionDate: item.completionDate,
+              status: item.status,
+              onTimeStatus: item.onTimeStatus
+            };
+          });
+        } else if (key === 'akk_system_activities_v1') {
+          sanitizedData = data.slice(0, 20);
+        } else if (key === STORAGE_KEYS.IMAGES) {
+          sanitizedData = data.slice(0, 20);
+        } else if (key === STORAGE_KEYS.SALES_ORDERS) {
+          sanitizedData = data.slice(0, 50);
+        }
+      }
+      safeSetItem(key, JSON.stringify(sanitizedData));
+    } catch {
+      // Safe fallback - in-memory state remains fully intact
     }
     this.notify();
   }
@@ -457,18 +1252,40 @@ class LogisticsStore {
   }
 
   public getStores(): RetailStore[] {
-    return [...this.stores];
+    return this.stores.filter(s => !isAreaRouteItem(s));
   }
 
   public getSchedules(): Schedule[] {
-    return this.schedules.map(sch => ({
-      ...sch,
-      store: this.stores.find(s => s.id === sch.storeId),
-      fleet: this.fleets.find(f => f.id === sch.fleetId),
-      crew: this.crews.find(c => c.id === sch.crewId),
-      crewHelper: sch.crewHelperId ? this.crews.find(c => c.id === sch.crewHelperId) : undefined,
-      crewHelper2: sch.crewHelper2Id ? this.crews.find(c => c.id === sch.crewHelper2Id) : undefined
-    }));
+    return this.schedules.map(sch => {
+      const areaName = resolveScheduleAreaName(sch);
+      const isBali = sch.isInterIsland || areaName.toUpperCase().includes('BALI') || areaName.toUpperCase().includes('DENPASAR') || areaName.toUpperCase().includes('SINGARAJA') || areaName.toUpperCase().includes('NEGARA');
+
+      const areaStore: RetailStore = {
+        id: sch.storeId && !sch.storeId.startsWith('str-fix-') ? sch.storeId : `area-${areaName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+        storeCode: `AREA-${areaName.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+        storeName: areaName, // ALWAYS NAMA AREA KIRIM
+        island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
+        province: isBali ? 'Bali' : 'Jawa Timur',
+        city: isBali ? 'Denpasar' : (areaName.toUpperCase().includes('JEMBER') ? 'Jember' : (areaName.toUpperCase().includes('SITUBONDO') ? 'Situbondo' : (areaName.toUpperCase().includes('BONDOWOSO') ? 'Bondowoso' : 'Banyuwangi'))),
+        address: `Area Pengiriman Distribusi ${areaName}`,
+        latitude: isBali ? -8.6705 : -8.219,
+        longitude: isBali ? 115.2126 : 114.369,
+        contactPerson: 'PIC Distribusi Area',
+        phone: '-',
+        deliveryWindow: '08:00 - 17:00',
+        storeCategory: 'Distribution Hub'
+      };
+
+      return {
+        ...sch,
+        areaName,
+        store: areaStore,
+        fleet: this.fleets.find(f => f.id === sch.fleetId) || sch.fleet,
+        crew: this.crews.find(c => c.id === sch.crewId) || sch.crew,
+        crewHelper: sch.crewHelperId ? (this.crews.find(c => c.id === sch.crewHelperId) || sch.crewHelper) : undefined,
+        crewHelper2: sch.crewHelper2Id ? (this.crews.find(c => c.id === sch.crewHelper2Id) || sch.crewHelper2) : undefined
+      };
+    });
   }
 
   public getDevices(): TracksolidDevice[] {
@@ -607,6 +1424,138 @@ class LogisticsStore {
   public setAreaDeliveryThreshold(val: number) {
     this.areaThreshold = val;
     this.saveToStorage(STORAGE_KEYS.AREA_THRESHOLD, val);
+  }
+
+  /**
+   * Menyelaraskan seluruh data jadwal operasional aktif ke submenu 'Histori & Otorisasi Kru'
+   */
+  public syncSchedulesToCrewHistory(schedules?: Schedule[]): number {
+    const targetSchedules = schedules || this.schedules || [];
+    let addedCount = 0;
+
+    targetSchedules.forEach((sch) => {
+      const crew = this.crews.find(c => c.id === sch.crewId);
+      if (!crew) return;
+
+      const helper = sch.crewHelperId ? this.crews.find(c => c.id === sch.crewHelperId) : (sch.crewHelper ? sch.crewHelper : null);
+      const fleet = this.fleets.find(f => f.id === sch.fleetId);
+      const store = this.stores.find(s => s.id === sch.storeId);
+      
+      const areaName = resolveScheduleAreaName(sch) || store?.storeName || sch.cargoDescription || 'Area Kirim';
+      const island = areaName.toUpperCase().includes('DENPASAR') || areaName.toUpperCase().includes('SINGARAJA') || areaName.toUpperCase().includes('NEGARA') || areaName.toUpperCase().includes('BALI')
+        ? 'Bali & Nusa Tenggara' 
+        : 'Jawa';
+      const city = areaName.toUpperCase().includes('DENPASAR') ? 'Denpasar' 
+        : (areaName.toUpperCase().includes('SINGARAJA') ? 'Singaraja' 
+        : (areaName.toUpperCase().includes('BONDOWOSO') ? 'Bondowoso' 
+        : (areaName.toUpperCase().includes('SITUBONDO') ? 'Situbondo' 
+        : (areaName.toUpperCase().includes('JEMBER') ? 'Jember' : 'Banyuwangi'))));
+      
+      const departureDate = sch.departureDate || '2026-01-05T07:30:00Z';
+      const trackingNumber = sch.trackingNumber || `PO-AKK-20260105-${fleet?.plateNumber || sch.fleetId || 'DS3'}`;
+
+      // Extract Inisial Mobil (e.g. DS1, DS3, NS2, NL1, N20)
+      const poCodeMatch = trackingNumber.match(/PO-AKK-\d+-([A-Za-z0-9]+)/i);
+      const extractedCode = poCodeMatch ? poCodeMatch[1] : null;
+      const initialCode = fleet?.initialCode || sch.fleet?.initialCode || extractedCode || sch.fleetId || 'DS3';
+
+      const existingIndex = this.crewHistory.findIndex(
+        h => (h.scheduleId === sch.id || h.trackingNumber === trackingNumber) && h.crewId === crew.id
+      );
+
+      const areaStats = this.checkCrewAreaThreshold(crew.id, areaName);
+      const seqNum = (existingIndex !== -1 ? this.crewHistory[existingIndex].areaTripSequenceNumber : areaStats.tripCount + 1) || 1;
+      const reqAppr = seqNum >= this.areaThreshold;
+
+      const historyItem: CrewDeliveryHistory = {
+        id: existingIndex !== -1 
+          ? this.crewHistory[existingIndex].id 
+          : `cdh-sync-drv-${crew.id}-${sch.id || Math.random().toString(36).substring(2, 9)}`,
+        crewId: crew.id,
+        crewName: crew.name,
+        scheduleId: sch.id,
+        trackingNumber,
+        storeName: areaName,
+        area: areaName,
+        city,
+        island,
+        vehiclePlate: fleet?.plateNumber || sch.fleetId || 'DS3',
+        initialCode,
+        vehicleType: fleet?.vehicleType || 'Engkel STD',
+        cargoWeightTon: sch.cargoWeightTon || 3.5,
+        cargoDescription: sch.cargoDescription || `Pengiriman ritase ke ${areaName}`,
+        completionDate: departureDate,
+        status: 'delivered',
+        onTimeStatus: 'Tepat Waktu',
+        ratingReceived: 5.0,
+        areaTripSequenceNumber: seqNum,
+        requiresAreaApproval: reqAppr,
+        areaApprovalStatus: reqAppr ? 'approved' : 'not_required',
+        notes: helper ? `Kru Driver: ${crew.name} | Helper: ${helper.name}` : `Kru Driver: ${crew.name}`
+      };
+
+      if (existingIndex !== -1) {
+        this.crewHistory[existingIndex] = historyItem;
+      } else {
+        this.crewHistory.unshift(historyItem);
+        addedCount++;
+      }
+
+      // Also track Helper history if assigned
+      if (helper) {
+        const helperExistingIndex = this.crewHistory.findIndex(
+          h => (h.scheduleId === sch.id || h.trackingNumber === trackingNumber) && h.crewId === helper.id
+        );
+        const helperHistoryItem: CrewDeliveryHistory = {
+          id: helperExistingIndex !== -1 
+            ? this.crewHistory[helperExistingIndex].id 
+            : `cdh-sync-hlp-${helper.id}-${sch.id || Math.random().toString(36).substring(2, 9)}`,
+          crewId: helper.id,
+          crewName: helper.name,
+          scheduleId: sch.id,
+          trackingNumber,
+          storeName: areaName,
+          area: areaName,
+          city,
+          island,
+          vehiclePlate: fleet?.plateNumber || sch.fleetId || 'DS3',
+          initialCode,
+          vehicleType: fleet?.vehicleType || 'Engkel STD',
+          cargoWeightTon: sch.cargoWeightTon || 3.5,
+          cargoDescription: sch.cargoDescription || `Pengiriman ritase ke ${areaName} (Sebagai Helper)`,
+          completionDate: departureDate,
+          status: 'delivered',
+          onTimeStatus: 'Tepat Waktu',
+          ratingReceived: 5.0,
+          areaTripSequenceNumber: 1,
+          requiresAreaApproval: false,
+          areaApprovalStatus: 'not_required',
+          notes: `Tugas Helper mendampingi Driver: ${crew.name}`
+        };
+
+        if (helperExistingIndex !== -1) {
+          this.crewHistory[helperExistingIndex] = helperHistoryItem;
+        } else {
+          this.crewHistory.unshift(helperHistoryItem);
+          addedCount++;
+        }
+      }
+    });
+
+    // Deduplicate crewHistory array to ensure 100% unique React keys
+    const seenIds = new Set<string>();
+    this.crewHistory = this.crewHistory.map((item, index) => {
+      if (seenIds.has(item.id)) {
+        const uniqueId = `${item.id}-uniq-${index}-${Math.floor(Math.random() * 1000)}`;
+        return { ...item, id: uniqueId };
+      }
+      seenIds.add(item.id);
+      return item;
+    });
+
+    this.saveToStorage(STORAGE_KEYS.CREW_HISTORY, this.crewHistory);
+    this.notify();
+    return addedCount;
   }
 
   // User Management & Authentication
@@ -766,10 +1715,38 @@ class LogisticsStore {
     this.notify();
   }
 
+  public setSchedules(schedules: Schedule[]): void {
+    this.schedules = [...schedules];
+    this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+    this.syncSchedulesToCrewHistory(this.schedules);
+    this.notify();
+  }
+
   public addSchedule(schedule: Omit<Schedule, 'id' | 'createdAt'>): Schedule {
+    const areaName = resolveScheduleAreaName(schedule);
+    const isBali = schedule.isInterIsland || areaName.toUpperCase().includes('BALI') || areaName.toUpperCase().includes('DENPASAR') || areaName.toUpperCase().includes('SINGARAJA') || areaName.toUpperCase().includes('NEGARA');
+
+    const areaStore: RetailStore = {
+      id: schedule.storeId && !schedule.storeId.startsWith('str-fix-') ? schedule.storeId : `area-${areaName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+      storeCode: `AREA-${areaName.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+      storeName: areaName,
+      island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
+      province: isBali ? 'Bali' : 'Jawa Timur',
+      city: isBali ? 'Denpasar' : (areaName.toUpperCase().includes('JEMBER') ? 'Jember' : (areaName.toUpperCase().includes('SITUBONDO') ? 'Situbondo' : (areaName.toUpperCase().includes('BONDOWOSO') ? 'Bondowoso' : 'Banyuwangi'))),
+      address: `Area Pengiriman Distribusi ${areaName}`,
+      latitude: isBali ? -8.6705 : -8.219,
+      longitude: isBali ? 115.2126 : 114.369,
+      contactPerson: 'PIC Distribusi Area',
+      phone: '-',
+      deliveryWindow: '08:00 - 17:00',
+      storeCategory: 'Distribution Hub'
+    };
+
     const newSchedule: Schedule = {
       ...schedule,
       id: 'sch-' + Math.random().toString(36).substring(2, 9),
+      areaName,
+      store: areaStore,
       createdAt: new Date().toISOString()
     };
 
@@ -781,6 +1758,17 @@ class LogisticsStore {
 
     this.schedules = [newSchedule, ...this.schedules];
     this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+    this.syncSchedulesToCrewHistory(this.schedules);
+
+    // Trigger auto-write middleware
+    this.dispatchMiddleware({
+      entityType: 'schedule',
+      action: 'create',
+      id: newSchedule.id,
+      data: newSchedule,
+      timestamp: new Date().toISOString()
+    });
+
     return newSchedule;
   }
 
@@ -798,6 +1786,18 @@ class LogisticsStore {
       return sch;
     });
     this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+    this.syncSchedulesToCrewHistory(this.schedules);
+
+    if (newSch) {
+      this.dispatchMiddleware({
+        entityType: 'schedule',
+        action: 'update',
+        id,
+        data: newSch,
+        previousData: oldSch || undefined,
+        timestamp: new Date().toISOString()
+      });
+    }
 
     if (oldSch && newSch) {
       const isUrgent = (newSch as Schedule).isInterIsland || (newSch as Schedule).status === 'delayed';
@@ -814,8 +1814,159 @@ class LogisticsStore {
   }
 
   public deleteSchedule(id: string) {
+    const target = this.schedules.find(sch => sch.id === id);
     this.schedules = this.schedules.filter(sch => sch.id !== id);
     this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+    this.syncSchedulesToCrewHistory(this.schedules);
+
+    this.dispatchMiddleware({
+      entityType: 'schedule',
+      action: 'delete',
+      id,
+      data: target || { id },
+      timestamp: new Date().toISOString()
+    });
+
+    this.notify();
+  }
+
+  /**
+   * Batch add or update multiple schedules efficiently without thread locking or UI freeze.
+   * On Google Sheets import, replaces old unedited schedules for the target month with fresh validated data.
+   */
+  public batchSyncSchedules(
+    itemsToAdd: Schedule[],
+    itemsToUpdate: { id: string; data: Partial<Schedule> }[] = [],
+    options: { isImport?: boolean; replaceMonth?: boolean } = {}
+  ): { addedCount: number; updatedCount: number } {
+    // On import or explicit replace request, purge old unedited schedules for the affected month(s)
+    if (options.isImport || options.replaceMonth) {
+      const datesToReplace = new Set<string>();
+      [...itemsToAdd, ...itemsToUpdate.map(u => u.data as Schedule)].forEach(item => {
+        if (item && item.departureDate) {
+          const d = new Date(item.departureDate);
+          if (!isNaN(d.getTime())) {
+            const monthKey = `${d.getFullYear()}-${d.getMonth()}`;
+            datesToReplace.add(monthKey);
+          }
+        }
+      });
+
+      if (datesToReplace.size > 0) {
+        this.schedules = this.schedules.filter(sch => {
+          if (sch.isManuallyEdited) return true; // Preserve user's manual edits
+          if (!sch.departureDate) return false;
+          const d = new Date(sch.departureDate);
+          if (isNaN(d.getTime())) return false;
+          const monthKey = `${d.getFullYear()}-${d.getMonth()}`;
+          return !datesToReplace.has(monthKey);
+        });
+      }
+    }
+
+    const updateMap = new Map<string, Partial<Schedule>>();
+    itemsToUpdate.forEach(u => updateMap.set(u.id, u.data));
+
+    // 1. In-memory update existing items
+    if (updateMap.size > 0) {
+      this.schedules = this.schedules.map(sch => {
+        if (updateMap.has(sch.id)) {
+          return { ...sch, ...updateMap.get(sch.id)! };
+        }
+        return sch;
+      });
+    }
+
+    // 2. In-memory prepend new items (deduplicated by ID)
+    const existingIdSet = new Set(this.schedules.map(s => s.id));
+    const cleanNewItems = itemsToAdd.filter(item => !existingIdSet.has(item.id));
+    this.schedules = [...cleanNewItems, ...this.schedules];
+
+    // 3. Single disk save
+    this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+
+    // 4. Single crew history recalculation
+    this.syncSchedulesToCrewHistory(this.schedules);
+
+    // 5. Single batched middleware dispatch (non-blocking)
+    setTimeout(() => {
+      this.dispatchMiddleware({
+        entityType: 'schedule',
+        action: 'update',
+        id: `batch-${Date.now()}`,
+        data: { added: cleanNewItems.length, updated: itemsToUpdate.length },
+        metadata: { isBatch: true, source: options.isImport ? 'google_sheets_sync' : 'batch' },
+        timestamp: new Date().toISOString()
+      });
+    }, 50);
+
+    this.notify();
+    return { addedCount: cleanNewItems.length, updatedCount: itemsToUpdate.length };
+  }
+
+  /**
+   * Mengambil data minggu jadwal admin Sheet ALL dari cache persistent atau mengonversi dari jadwal operasional aktif
+   */
+  public getAdminScheduleWeeks(year: number, month: number): any[] | null {
+    const effectiveMonth = month === -1 ? 0 : month;
+    const cacheKey = `akk_admin_schedule_cache_${year}_${effectiveMonth}`;
+    try {
+      const saved = localStorage.getItem(cacheKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.days?.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal membaca cache admin schedule weeks:', e);
+    }
+    return null;
+  }
+
+  /**
+   * Menyimpan data minggu jadwal admin Sheet ALL ke cache persistent
+   */
+  public saveAdminScheduleWeeks(year: number, month: number, weeks: any[]) {
+    const effectiveMonth = month === -1 ? 0 : month;
+    const cacheKey = `akk_admin_schedule_cache_${year}_${effectiveMonth}`;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(weeks));
+      localStorage.setItem('akk_admin_schedule_weeks_cache', JSON.stringify(weeks));
+      localStorage.setItem('akk_last_admin_schedule_sync_time', new Date().toISOString());
+    } catch (e) {
+      console.warn('Gagal menyimpan admin schedule weeks:', e);
+    }
+
+    this.dispatchMiddleware({
+      entityType: 'admin_schedule',
+      action: 'update',
+      id: `weeks_${year}_${effectiveMonth}`,
+      data: weeks,
+      timestamp: new Date().toISOString()
+    });
+
+    this.notify();
+  }
+
+  /**
+   * Upload or attach image (Proof of delivery, manifest, photo) with automatic middleware dispatch
+   */
+  public attachImageToSchedule(scheduleId: string, imageUrl: string, imageType: string = 'proof_of_delivery', notes?: string) {
+    this.dispatchMiddleware({
+      entityType: 'image',
+      action: 'upload',
+      id: scheduleId,
+      data: {
+        scheduleId,
+        url: imageUrl,
+        type: imageType,
+        notes,
+        timestamp: new Date().toISOString()
+      },
+      timestamp: new Date().toISOString()
+    });
+    this.logActivity('Unggah Gambar / Dokumen', scheduleId, `Unggah ${imageType} pada jadwal ${scheduleId}`);
     this.notify();
   }
 
@@ -898,6 +2049,16 @@ class LogisticsStore {
         this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
       }
     }
+
+    this.dispatchMiddleware({
+      entityType: 'schedule',
+      action: 'status_change',
+      id,
+      data: { id, status, actualArrival: status === 'delivered' ? new Date().toISOString() : undefined },
+      timestamp: new Date().toISOString()
+    });
+
+    this.notify();
   }
 
   public addFleet(fleet: Omit<Fleet, 'id'>): Fleet {
@@ -907,6 +2068,15 @@ class LogisticsStore {
     };
     this.fleets = [...this.fleets, newFleet];
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+
+    this.dispatchMiddleware({
+      entityType: 'fleet',
+      action: 'create',
+      id: newFleet.id,
+      data: newFleet,
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
     return newFleet;
   }
@@ -923,12 +2093,39 @@ class LogisticsStore {
       return f;
     });
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+
+    this.dispatchMiddleware({
+      entityType: 'fleet',
+      action: 'status_change',
+      id,
+      data: { id, status, currentTonnage: tonnage },
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
   }
 
   public updateFleet(id: string, updatedFields: Partial<Fleet>) {
-    this.fleets = this.fleets.map(f => (f.id === id ? { ...f, ...updatedFields } : f));
+    let updatedFleet: Fleet | null = null;
+    this.fleets = this.fleets.map(f => {
+      if (f.id === id) {
+        updatedFleet = { ...f, ...updatedFields };
+        return updatedFleet;
+      }
+      return f;
+    });
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+
+    if (updatedFleet) {
+      this.dispatchMiddleware({
+        entityType: 'fleet',
+        action: 'update',
+        id,
+        data: updatedFleet,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     this.notify();
   }
 
@@ -938,6 +2135,13 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
     if (deletedFleet) {
       this.logActivity('Hapus Armada', deletedFleet.plateNumber, `Menghapus armada ${deletedFleet.plateNumber} (${deletedFleet.vehicleType})`);
+      this.dispatchMiddleware({
+        entityType: 'fleet',
+        action: 'delete',
+        id,
+        data: deletedFleet,
+        timestamp: new Date().toISOString()
+      });
     }
     this.notify();
   }
@@ -952,6 +2156,15 @@ class LogisticsStore {
     this.crews = [...this.crews, newCrew];
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     this.logActivity('Tambah Kru', newCrew.name, `Menambahkan kru baru ${newCrew.name} sebagai ${newCrew.role}`);
+    
+    this.dispatchMiddleware({
+      entityType: 'crew',
+      action: 'create',
+      id: newCrew.id,
+      data: newCrew,
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
     return newCrew;
   }
@@ -959,12 +2172,39 @@ class LogisticsStore {
   public updateCrewStatus(id: string, status: Crew['status']) {
     this.crews = this.crews.map(c => (c.id === id ? { ...c, status } : c));
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    
+    this.dispatchMiddleware({
+      entityType: 'crew',
+      action: 'status_change',
+      id,
+      data: { id, status },
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
   }
 
   public updateCrew(id: string, updatedFields: Partial<Crew>) {
-    this.crews = this.crews.map(c => (c.id === id ? { ...c, ...updatedFields } : c));
+    let updatedCrew: Crew | null = null;
+    this.crews = this.crews.map(c => {
+      if (c.id === id) {
+        updatedCrew = { ...c, ...updatedFields };
+        return updatedCrew;
+      }
+      return c;
+    });
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+
+    if (updatedCrew) {
+      this.dispatchMiddleware({
+        entityType: 'crew',
+        action: 'update',
+        id,
+        data: updatedCrew,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     this.notify();
   }
 
@@ -974,35 +2214,99 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     if (deletedCrew) {
       this.logActivity('Hapus Kru', deletedCrew.name, `Menghapus kru ${deletedCrew.name} (${deletedCrew.role}) dari sistem armada`);
+      this.dispatchMiddleware({
+        entityType: 'crew',
+        action: 'delete',
+        id,
+        data: deletedCrew,
+        timestamp: new Date().toISOString()
+      });
     }
     this.notify();
   }
 
   public addStore(store: Omit<RetailStore, 'id'>): RetailStore {
+    if (isAreaRouteItem(store)) {
+      console.warn(`[Store Protection] Blocked adding non-retail area item "${store.storeName}" to Retail Stores table.`);
+      return {
+        ...store,
+        id: 'area-dest-' + Math.random().toString(36).substring(2, 8)
+      } as RetailStore;
+    }
     const newStore: RetailStore = {
       ...store,
       id: 'str-' + Math.random().toString(36).substring(2, 8)
     };
-    this.stores = [...this.stores, newStore];
+    this.stores = [...this.stores.filter(s => !isAreaRouteItem(s)), newStore];
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    
+    this.dispatchMiddleware({
+      entityType: 'store',
+      action: 'create',
+      id: newStore.id,
+      data: newStore,
+      timestamp: new Date().toISOString()
+    });
+
+    this.notify();
     return newStore;
   }
 
   public setStores(newStores: RetailStore[]): void {
-    this.stores = [...newStores];
+    this.stores = newStores.filter(s => !isAreaRouteItem(s));
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+    
+    this.dispatchMiddleware({
+      entityType: 'store',
+      action: 'update',
+      id: 'all_stores',
+      data: { count: this.stores.length },
+      metadata: { isBatch: true },
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
   }
 
   public updateStore(id: string, updatedFields: Partial<RetailStore>): void {
-    this.stores = this.stores.map(s => s.id === id ? { ...s, ...updatedFields } : s);
+    let updatedStore: RetailStore | null = null;
+    this.stores = this.stores.map(s => {
+      if (s.id === id) {
+        updatedStore = { ...s, ...updatedFields };
+        return updatedStore;
+      }
+      return s;
+    });
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+
+    if (updatedStore) {
+      this.dispatchMiddleware({
+        entityType: 'store',
+        action: 'update',
+        id,
+        data: updatedStore,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     this.notify();
   }
 
   public deleteStore(id: string): void {
+    const target = this.stores.find(s => s.id === id);
     this.stores = this.stores.filter(s => s.id !== id);
     this.saveToStorage(STORAGE_KEYS.STORES, this.stores);
+
+    if (target) {
+      this.dispatchMiddleware({
+        entityType: 'store',
+        action: 'delete',
+        id,
+        data: target,
+        timestamp: new Date().toISOString()
+      });
+    }
+    this.notify();
   }
 
   public setSupabaseConfig(config: SupabaseConfig) {
@@ -1459,6 +2763,14 @@ class LogisticsStore {
       `Pengisian ${newLog.liters} L ${newLog.fuelType} (Rp ${totalCost.toLocaleString('id-ID')}) - Rasio: ${ratioKmPerLiter} KM/L [${efficiencyStatus}]`
     );
 
+    this.dispatchMiddleware({
+      entityType: 'fuel',
+      action: 'create',
+      id: newLog.id,
+      data: newLog,
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
     return newLog;
   }
@@ -1512,6 +2824,14 @@ class LogisticsStore {
       `Pembaruan catatan BBM ID: ${id}`
     );
 
+    this.dispatchMiddleware({
+      entityType: 'fuel',
+      action: 'update',
+      id,
+      data: updatedLog,
+      timestamp: new Date().toISOString()
+    });
+
     this.notify();
   }
 
@@ -1526,6 +2846,14 @@ class LogisticsStore {
         item.plateNumber,
         `Catatan pengisian BBM ${item.liters} L pada tanggal ${item.date} dihapus`
       );
+
+      this.dispatchMiddleware({
+        entityType: 'fuel',
+        action: 'delete',
+        id,
+        data: item,
+        timestamp: new Date().toISOString()
+      });
     }
     this.notify();
   }

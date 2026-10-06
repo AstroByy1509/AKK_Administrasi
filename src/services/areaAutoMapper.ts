@@ -59,7 +59,12 @@ const LOGISTICS_ALIAS_DICTIONARY: Record<string, string> = {
   'KBR': 'KALIBARU',
   'SGG': 'SONGGON',
   'SRN': 'SRONO',
-  'PW': 'PURWO',
+  'PW': 'PURWO PASAR',
+  'DAMBUNTUNG': 'PURWO DAMBUNTUNG',
+  'PASAR': 'PURWO PASAR',
+  'SUMBERAYU': 'SUMBERAYU RETAIL',
+  'SUMBERAYUY': 'SUMBERAYU RETAIL',
+  'SBY': 'SUMBERAYU RETAIL',
   'SGR2': 'SANGGAR',
   'XSTAIL': 'KALISTAIL',
   'SMP': 'SEMPU',
@@ -116,41 +121,23 @@ function tokenizeAreaString(text: string): string[] {
 export const areaAutoMapper = {
   /**
    * Mengambil semua daftar area resmi yang diakui di tabel 'Jadwal Pengiriman & Muat'
-   * (Menggabungkan STANDARD_AREAS, stores di logisticsStore, dan custom registered areas)
+   * (Hanya memuat Wilayah/Area Pengiriman, bukan toko retail/pelanggan)
    */
   getOfficialAreaList(): OfficialAreaItem[] {
     const list: OfficialAreaItem[] = [];
     const seenNames = new Set<string>();
 
-    // 1. From logisticsStore stores
-    const stores = logisticsStore.getStores();
-    stores.forEach(store => {
-      const normalizedName = store.storeName.trim().toUpperCase();
-      if (!seenNames.has(normalizedName)) {
-        seenNames.add(normalizedName);
-        list.push({
-          id: store.id,
-          name: store.storeName,
-          storeId: store.id,
-          city: store.city,
-          island: store.island,
-          category: store.storeCategory,
-          address: store.address,
-          isInterIsland: store.island !== 'Jawa',
-          source: 'official_store'
-        });
-      }
-    });
-
-    // 2. From STANDARD_AREAS (if not already added as a store)
+    // 1. From STANDARD_AREAS (Official Delivery Areas - NO retail store customer names)
     STANDARD_AREAS.forEach(areaName => {
       const upper = areaName.toUpperCase();
       if (!seenNames.has(upper)) {
         seenNames.add(upper);
         const isBali = upper.includes('DENPASAR') || upper.includes('SINGARAJA') || upper.includes('NEGARA');
-        const city = isBali ? 'Bali / NTB' : (upper.includes('BONDOWOSO') || upper.includes('STB') ? 'Situbondo / Bondowoso' : (upper.includes('JEMBER') ? 'Jember' : 'Banyuwangi'));
+        const city = isBali 
+          ? (upper.includes('DENPASAR') ? 'Denpasar' : (upper.includes('SINGARAJA') ? 'Singaraja' : 'Negara'))
+          : (upper.includes('BONDOWOSO') || upper.includes('STB') ? 'Situbondo / Bondowoso' : (upper.includes('JEMBER') ? 'Jember' : 'Banyuwangi'));
         list.push({
-          id: `std-${upper.replace(/\s+/g, '_')}`,
+          id: `std-${upper.replace(/[^A-Z0-9]/g, '_')}`,
           name: areaName,
           city,
           island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
@@ -161,7 +148,7 @@ export const areaAutoMapper = {
       }
     });
 
-    // 3. From custom saved areas in localStorage
+    // 2. From custom saved delivery areas in localStorage
     try {
       const savedCustom = localStorage.getItem(STORAGE_KEY_CUSTOM_AREAS);
       if (savedCustom) {
@@ -367,8 +354,9 @@ export const areaAutoMapper = {
     // Generate clean code if not provided
     const storeCode = payload.storeCode || ('ARE-' + cleanName.replace(/[^A-Z0-9]/g, '').substring(0, 4) + '-' + Math.floor(Math.random() * 90 + 10));
 
-    // Save as RetailStore in logisticsStore
-    const newStore = logisticsStore.addStore({
+    // Create virtual RetailStore representation for schedule item mapping
+    const newStore: RetailStore = {
+      id: 'area-custom-' + Math.random().toString(36).substring(2, 8),
       storeCode,
       storeName: cleanName,
       island: payload.island,
@@ -381,7 +369,7 @@ export const areaAutoMapper = {
       phone: payload.phone || '0812-3456-7890',
       deliveryWindow: payload.deliveryWindow || '08:00 - 17:00',
       storeCategory: payload.category || (cleanName.includes('GROSIR') ? 'Distribution Hub' : 'Supermarket')
-    });
+    };
 
     const officialItem: OfficialAreaItem = {
       id: newStore.id,

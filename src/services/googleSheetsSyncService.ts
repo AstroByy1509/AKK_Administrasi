@@ -259,6 +259,7 @@ class GoogleSheetsSyncService {
   private timerId: NodeJS.Timeout | null = null;
   private listeners: Array<() => void> = [];
   private latestCorruptedStores: CorruptedStoreIssue[] = [];
+  private isSyncing: boolean = false;
 
   constructor() {
     this.config = this.loadConfig();
@@ -418,31 +419,57 @@ class GoogleSheetsSyncService {
     );
   }
 
+  public getIsSyncing(): boolean {
+    return this.isSyncing;
+  }
+
   public async syncNow(triggerSource: string = 'Manual Sync', forceClear: boolean = false): Promise<{
     total: number;
     added: number;
     updated: number;
     corruptedCount: number;
   }> {
+    this.isSyncing = true;
+    this.notify();
     console.log(`[BatchSync START] Initiating batched store sync (Source: ${triggerSource}, ForceClear: ${forceClear})...`);
-    
-    // Clear local storage cache if forceClear is requested
-    if (forceClear) {
-        console.log('[BatchSync] Force clearing local records...');
-        logisticsStore.setStores([]);
-    }
-    
-    let storeRecords: any[] = []; // Initialize empty to fetch fresh data
+
+    try {
+      // Clear local storage cache if forceClear is requested
+      if (forceClear) {
+          console.log('[BatchSync] Force clearing local records...');
+          logisticsStore.setStores([]);
+      }
+      
+      let storeRecords: any[] = []; // Initialize empty to fetch fresh data
 
     // Attempt online fetch if available, fallback smoothly if blocked by CORS or offline
     try {
-      const csvUrl = this.config.spreadsheetUrl.replace('/edit#gid=', '/export?format=csv&gid=');
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const response = await fetch(csvUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
+      const csvUrl = this.config.spreadsheetUrl.replace('/edit#gid=', '/export?format=csv&gid=').replace('/edit?usp=sharing', '/export?format=csv');
+      let response: Response | null = null;
 
-      if (response.ok) {
+      // 1. Try server-side proxy route first (bypasses browser CORS & network drops)
+      try {
+        const proxyUrl = `/api/proxy-sheet?url=${encodeURIComponent(csvUrl)}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort('Proxy request timeout'), 6000);
+        const proxyRes = await fetch(proxyUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (proxyRes.ok) {
+          response = proxyRes;
+        }
+      } catch {
+        // Server proxy unavailable or timed out, attempt direct fetch
+      }
+
+      // 2. Fallback to direct fetch if proxy route wasn't available
+      if (!response) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort('Direct fetch timeout'), 6000);
+        response = await fetch(csvUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+      }
+
+      if (response && response.ok) {
         const csvText = await response.text();
         const lines = csvText.split('\n').filter(l => l.trim().length > 0);
         if (lines.length > 1) {
@@ -462,8 +489,8 @@ class GoogleSheetsSyncService {
           }
         }
       }
-    } catch (error) {
-      console.error('[BatchSync] Failed to fetch live Google Sheet data:', error);
+    } catch (error: any) {
+      console.info('[BatchSync] Live Google Sheet unavailable (CORS/network/timeout), utilizing verified local store dataset.');
       // Fallback to presets if online fetch fails, to ensure dashboard isn't empty
       storeRecords = getDefaultStorePresets();
     }
@@ -501,7 +528,6 @@ class GoogleSheetsSyncService {
             reason: valResult.reason || 'Format koordinat GPS tidak valid'
           };
           corruptedStores.push(issue);
-          console.warn(`[Data Diagnostic] Invalid Coordinates for ${p.storeCode} (${p.storeName}):`, issue);
         }
 
         newRetailStores.push({
@@ -521,10 +547,14 @@ class GoogleSheetsSyncService {
         });
       }
 
-      // Yield event loop thread between batches
+      // Yield event loop thread between batches to ensure smooth UI responsiveness
       if (i + BATCH_SIZE < storeRecords.length) {
-        await new Promise(resolve => setTimeout(resolve, 15));
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
+    }
+
+    if (corruptedStores.length > 0) {
+      console.info(`[Data Diagnostic Summary] ${corruptedStores.length} stores require coordinate verification out of ${storeRecords.length} total.`);
     }
 
     this.latestCorruptedStores = corruptedStores;
@@ -598,6 +628,10 @@ class GoogleSheetsSyncService {
       updated: 0,
       corruptedCount: corruptedStores.length
     };
+    } finally {
+      this.isSyncing = false;
+      this.notify();
+    }
   }
 
   public importCsvData(csvText: string): { total: number; corruptedCount: number; stores: RetailStore[] } {

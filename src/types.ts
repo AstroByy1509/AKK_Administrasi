@@ -127,6 +127,7 @@ export interface Schedule {
   areaTripCount?: number;
   areaName?: string;
   isUrgentOverride?: boolean; // Override flag for local-only crew assigned to out-of-town routes
+  isManuallyEdited?: boolean; // Flag to indicate user made manual edits, preventing automatic overwrite
 }
 
 export interface CrewDeliveryHistory {
@@ -140,6 +141,7 @@ export interface CrewDeliveryHistory {
   city: string;
   island: string;
   vehiclePlate: string;
+  initialCode?: string; // Inisial Mobil (e.g. DS1, DS3, NS2, NL1, N20)
   vehicleType: VehicleType;
   cargoWeightTon: number;
   cargoDescription: string;
@@ -467,6 +469,29 @@ export interface SwapShiftRequest {
 
 export type TirePosition = 'Depan Kiri' | 'Depan Kanan' | 'Belakang Kiri Luar' | 'Belakang Kiri Dalam' | 'Belakang Kanan Luar' | 'Belakang Kanan Dalam' | 'Serep';
 export type TireConditionStatus = 'Optimal' | 'Waspada' | 'Kritis';
+
+export interface ImageRecord {
+  id: string;
+  entityId: string;
+  entityType: 'schedule' | 'fleet' | 'fuel' | 'crew' | 'manifest' | 'general';
+  imageUrl: string;
+  category: 'proof_of_delivery' | 'manifest' | 'fuel_receipt' | 'vehicle_condition' | 'driver_photo' | 'damage_report' | 'other';
+  title?: string;
+  notes?: string;
+  uploadedBy?: string;
+  timestamp: string;
+  syncedToCloud?: boolean;
+  fileSizeKb?: number;
+}
+
+export interface AutoSyncStatus {
+  isSyncing: boolean;
+  lastSyncTime: string | null;
+  syncedCount: number;
+  pendingQueue: number;
+  lastError?: string | null;
+  lastSyncedEntity?: string | null;
+}
 
 export interface FleetTireWearPrediction {
   fleetId: string;

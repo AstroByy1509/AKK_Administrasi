@@ -662,6 +662,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
 
   // Real-time SLA Tolerance Alert State & Cache Ref to prevent toast spamming
   const warnedSlaRef = React.useRef<Set<string>>(new Set());
+  const warnedGeofenceRef = React.useRef<Set<string>>(new Set());
+  const warnedCriticalRef = React.useRef<Set<string>>(new Set());
   const [slaAlertLastTriggered, setSlaAlertLastTriggered] = useState<string | null>(null);
 
   // Helper function to calculate SLA progression and tolerance
@@ -739,12 +741,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
       const availableBackupDrivers = crews.filter(c => c.role === 'Driver Cadangan' && c.status === 'available');
 
       if (criticalSchedulesToday.length > 0 && availableBackupDrivers.length === 0) {
-        logisticsStore.emitNotification(
-          'schedule',
-          '⚠️ Peringatan Kritis: Kekurangan Driver Cadangan',
-          `Terdapat ${criticalSchedulesToday.length} jadwal pengiriman inter-island hari ini tanpa cadangan driver aktif.`,
-          true
-        );
+        const key = `crit-${today}-${criticalSchedulesToday.length}`;
+        if (!warnedCriticalRef.current.has(key)) {
+          warnedCriticalRef.current.add(key);
+          logisticsStore.emitNotification(
+            'schedule',
+            '⚠️ Peringatan Kritis: Kekurangan Driver Cadangan',
+            `Terdapat ${criticalSchedulesToday.length} jadwal pengiriman inter-island hari ini tanpa cadangan driver aktif.`,
+            true
+          );
+        }
       }
     };
 
@@ -769,12 +775,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
             );
 
             if (distance > RADIUS_KM) {
-              logisticsStore.emitNotification(
-                'geofence',
-                '📍 Peringatan Geofencing',
-                `Armada ${device.vehiclePlate} (${schedule.fleet?.plateNumber}) keluar dari radius area distribusi (${distance.toFixed(1)} km dari tujuan).`,
-                true
-              );
+              const geofenceKey = `gf-${schedule.id}-${device.vehiclePlate}`;
+              if (!warnedGeofenceRef.current.has(geofenceKey)) {
+                warnedGeofenceRef.current.add(geofenceKey);
+                logisticsStore.emitNotification(
+                  'geofence',
+                  '📍 Peringatan Geofencing',
+                  `Armada ${device.vehiclePlate} (${schedule.fleet?.plateNumber}) keluar dari radius area distribusi (${distance.toFixed(1)} km dari tujuan).`,
+                  true
+                );
+              }
             }
           }
         }

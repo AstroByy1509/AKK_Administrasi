@@ -875,7 +875,7 @@ export const NextDayReadinessPanel: React.FC<NextDayReadinessPanelProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
                     <tr>
-                      <th className="p-3 font-semibold">Toko & Wilayah</th>
+                      <th className="p-3 font-semibold">Area Kirim & Wilayah</th>
                       <th className="p-3 font-semibold">Jenis Rute</th>
                       <th className="p-3 font-semibold">Jam Berangkat</th>
                       <th className="p-3 font-semibold">Supir Ditugaskan</th>
@@ -891,10 +891,10 @@ export const NextDayReadinessPanel: React.FC<NextDayReadinessPanelProps> = ({
 
                       return (
                         <tr key={sch.id} className="hover:bg-slate-800/30 transition">
-                          {/* Toko & Wilayah */}
+                          {/* Area Kirim & Wilayah */}
                           <td className="p-3">
                             <div className="font-semibold text-white">
-                              {sch.store?.storeName || sch.storeId}
+                              {sch.areaName || sch.store?.storeName || sch.storeId}
                             </div>
                             <div className="text-[11px] text-slate-400 flex items-center gap-1">
                               <MapPin className="w-3 h-3 text-slate-500" />

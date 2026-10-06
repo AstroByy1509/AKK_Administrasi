@@ -14,7 +14,8 @@ import {
   Compass,
   MapPin,
   Sparkles,
-  Info
+  Info,
+  Clock
 } from 'lucide-react';
 import { logisticsStore } from '../services/store';
 import { googleSheetsSyncService, validateCoordinateData, CorruptedStoreIssue } from '../services/googleSheetsSyncService';
@@ -41,6 +42,7 @@ export const LiveSyncHealthCard: React.FC = () => {
   const { addNotification } = useToast();
   const [localStores, setLocalStores] = useState<RetailStore[]>(logisticsStore.getStores());
   const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
+  const [autoSyncStatus, setAutoSyncStatus] = useState(logisticsStore.getAutoSyncStatus());
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastCheckTime, setLastCheckTime] = useState<string>(new Date().toLocaleTimeString('id-ID'));
   const [simulatedRejections, setSimulatedRejections] = useState<CoordinateDiscrepancyItem[]>([]);
@@ -55,9 +57,13 @@ export const LiveSyncHealthCard: React.FC = () => {
       setLocalStores(logisticsStore.getStores());
       setLastCheckTime(new Date().toLocaleTimeString('id-ID'));
     });
+    const unsubAutoSync = logisticsStore.onAutoSyncStatusChange((status) => {
+      setAutoSyncStatus(status);
+    });
     return () => {
       unsubStore();
       unsubSync();
+      unsubAutoSync();
     };
   }, []);
 
@@ -327,33 +333,44 @@ export const LiveSyncHealthCard: React.FC = () => {
           </div>
         </div>
 
-        {/* Count Card 4: Discrepancy Total & Heartbeat */}
-        <div className={`p-4 rounded-xl border space-y-2 relative overflow-hidden ${
-          totalDiscrepancies === 0 
-            ? 'bg-slate-950/80 border-slate-800' 
-            : 'bg-amber-950/20 border-amber-900/40'
-        }`}>
+        {/* Count Card 4: Store Auto-Writer Middleware Active Status */}
+        <div className="bg-slate-950/80 p-4 rounded-xl border border-emerald-900/40 space-y-2 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs">
-            <span className="flex items-center gap-1.5 font-semibold text-amber-400">
-              <AlertTriangle className="w-4 h-4" />
-              Rejected / Missing
+            <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
+              <Zap className="w-4 h-4 text-emerald-400" />
+              Middleware Auto-Writer
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-mono">
-              Live Issues
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-mono border border-emerald-500/30">
+              {autoSyncStatus.isSyncing ? 'Syncing...' : 'Realtime'}
             </span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className={`text-3xl font-black font-mono ${totalDiscrepancies === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {totalDiscrepancies}
-            </span>
-            <span className="text-xs text-slate-400">kasus koordinat ditolak</span>
+            <span className="text-3xl font-black text-emerald-400 font-mono">{autoSyncStatus.syncedCount}</span>
+            <span className="text-xs text-slate-400">mutasi disinkronkan</span>
           </div>
           <div className="text-[11px] text-slate-400 flex items-center justify-between">
-            <span>Terakhir cek: {lastCheckTime}</span>
+            <span className="truncate max-w-[140px] text-slate-400">{autoSyncStatus.lastSyncedEntity ? `Last: ${autoSyncStatus.lastSyncedEntity}` : 'Siap Menulis'}</span>
             <span className="text-emerald-400 flex items-center gap-1">
-              <Activity className="w-3 h-3" /> Live
+              <CheckCircle2 className="w-3 h-3" /> Auto-Save
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* Auto-Sync Middleware Active Indicator Banner */}
+      <div className="px-5 py-3 bg-gradient-to-r from-emerald-950/40 via-slate-950 to-blue-950/40 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+          </span>
+          <p className="text-slate-300">
+            <strong className="text-emerald-400 font-semibold">Store Middleware Aktif:</strong> Setiap perubahan entitas (jadwal, status armada, dan gambar/dokumen) secara otomatis memicu proses penulisan ke backend &amp; Google Sheets tanpa perlu tombol sinkronisasi manual.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 font-mono text-[11px] text-slate-400 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-800">
+          <Clock className="w-3.5 h-3.5 text-blue-400" />
+          <span>Sync: {autoSyncStatus.lastSyncTime ? new Date(autoSyncStatus.lastSyncTime).toLocaleTimeString('id-ID') : lastCheckTime}</span>
         </div>
       </div>
 

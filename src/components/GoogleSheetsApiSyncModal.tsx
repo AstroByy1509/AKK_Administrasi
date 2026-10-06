@@ -20,7 +20,8 @@ import {
   Layers,
   Info,
   MapPin,
-  Plus
+  Plus,
+  Users
 } from 'lucide-react';
 import { 
   googleSignIn, 
@@ -42,8 +43,11 @@ import {
   ImportSyncOptions 
 } from '../services/scheduleImportValidator';
 import { areaAutoMapper, AreaMappingEntry, OfficialAreaItem } from '../services/areaAutoMapper';
+import { crewAutoMapper, CrewMappingEntry, OfficialCrewItem } from '../services/crewAutoMapper';
 import { AreaAutoMappingSection } from './AreaAutoMappingSection';
+import { CrewAutoMappingSection } from './CrewAutoMappingSection';
 import { QuickCreateAreaModal } from './QuickCreateAreaModal';
+import { QuickCreateCrewModal } from './QuickCreateCrewModal';
 import { User } from 'firebase/auth';
 
 interface GoogleSheetsApiSyncModalProps {
@@ -74,24 +78,53 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Validation options state
-  const [skipDuplicates, setSkipDuplicates] = useState<boolean>(true);
+  const [skipDuplicates, setSkipDuplicates] = useState<boolean>(false);
   const [skipInvalid, setSkipInvalid] = useState<boolean>(true);
-  const [overwriteDuplicates, setOverwriteDuplicates] = useState<boolean>(false);
+  const [overwriteDuplicates, setOverwriteDuplicates] = useState<boolean>(true);
   const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'duplicate' | 'invalid'>('all');
-  const [activeSyncTab, setActiveSyncTab] = useState<'validation' | 'area_mapping'>('validation');
+  const [activeSyncTab, setActiveSyncTab] = useState<'validation' | 'area_mapping' | 'crew_mapping'>('validation');
 
-  // Intelligent Area Auto-Mapping State
+  // Intelligent Area & Crew Auto-Mapping State
   const [detectedAreaMappings, setDetectedAreaMappings] = useState<Record<string, AreaMappingEntry>>({});
   const [officialAreasList, setOfficialAreasList] = useState<OfficialAreaItem[]>(() => areaAutoMapper.getOfficialAreaList());
   const [quickCreateAreaTarget, setQuickCreateAreaTarget] = useState<string | null>(null);
 
-  // Auto-detect areas from previewTrips
+  const [detectedCrewMappings, setDetectedCrewMappings] = useState<Record<string, CrewMappingEntry>>({});
+  const [officialCrewsList, setOfficialCrewsList] = useState<OfficialCrewItem[]>(() => crewAutoMapper.getOfficialCrewList());
+  const [quickCreateCrewTarget, setQuickCreateCrewTarget] = useState<{ name: string; roleHint?: 'Driver' | 'Helper' } | null>(null);
+
+  // Auto-detect areas and crews from previewTrips
   useEffect(() => {
     if (previewTrips.length > 0) {
       const rawAreas = previewTrips.map(t => t.rawArea || t.area).filter(Boolean);
       const mappings = areaAutoMapper.processRawAreaBatch(rawAreas);
       setDetectedAreaMappings(prev => {
         const updated = { ...mappings };
+        Object.keys(prev).forEach(k => {
+          if (prev[k].isUserOverridden && updated[k]) {
+            updated[k] = prev[k];
+          }
+        });
+        return updated;
+      });
+
+      // Extract raw crew names (drivers and helpers)
+      const rawCrews: Array<{ name: string; roleHint?: 'Driver' | 'Helper' }> = [];
+      previewTrips.forEach(t => {
+        if (t.driver) rawCrews.push({ name: t.driver, roleHint: 'Driver' });
+        if (t.helper) {
+          t.helper.split(/[,&/]+/).forEach(h => {
+            const cleanH = h.trim();
+            if (cleanH && cleanH !== '-' && cleanH !== '0') {
+              rawCrews.push({ name: cleanH, roleHint: 'Helper' });
+            }
+          });
+        }
+      });
+
+      const crewMappings = crewAutoMapper.processRawCrewBatch(rawCrews);
+      setDetectedCrewMappings(prev => {
+        const updated = { ...crewMappings };
         Object.keys(prev).forEach(k => {
           if (prev[k].isUserOverridden && updated[k]) {
             updated[k] = prev[k];
@@ -109,6 +142,14 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
     });
     return dict;
   }, [detectedAreaMappings]);
+
+  const crewMappingDict: Record<string, string> = useMemo(() => {
+    const dict: Record<string, string> = {};
+    Object.entries(detectedCrewMappings).forEach(([k, v]) => {
+      if (v.matchedCrewName) dict[k] = v.matchedCrewName;
+    });
+    return dict;
+  }, [detectedCrewMappings]);
 
   const handleMappingChange = (rawArea: string, targetOfficialArea: string) => {
     const foundOfficial = officialAreasList.find(a => a.name.toUpperCase() === targetOfficialArea.toUpperCase());
@@ -129,6 +170,27 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
     });
   };
 
+  const handleCrewMappingChange = (rawName: string, targetCrewName: string) => {
+    const foundCrew = officialCrewsList.find(c => c.name.toUpperCase() === targetCrewName.toUpperCase());
+    setDetectedCrewMappings(prev => {
+      const current = prev[rawName];
+      const updated: CrewMappingEntry = {
+        rawName,
+        roleHint: current?.roleHint || 'Driver',
+        occurrenceCount: current?.occurrenceCount || 1,
+        matchedCrewId: foundCrew?.id || null,
+        matchedCrewName: targetCrewName,
+        matchedCrewRole: foundCrew?.role || 'Driver',
+        confidence: 'exact',
+        confidenceScore: 100,
+        similarityReason: `Dipetakan manual oleh pengguna ke '${targetCrewName}'`,
+        isUserOverridden: true
+      };
+      crewAutoMapper.saveMappingPreference(rawName, targetCrewName);
+      return { ...prev, [rawName]: updated };
+    });
+  };
+
   const handleAreaCreated = (newArea: OfficialAreaItem, rawAreaKey: string) => {
     const updatedList = areaAutoMapper.getOfficialAreaList();
     setOfficialAreasList(updatedList);
@@ -145,6 +207,31 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
           confidence: 'exact',
           confidenceScore: 100,
           similarityReason: `Area baru '${newArea.name}' berhasil dibuat dan didaftarkan ke Jadwal Pengiriman & Muat`,
+          isUserOverridden: true,
+          isNewlyCreated: true
+        }
+      };
+    });
+  };
+
+  const handleCrewCreated = (newCrew: OfficialCrewItem) => {
+    const updatedList = crewAutoMapper.getOfficialCrewList();
+    setOfficialCrewsList(updatedList);
+
+    setDetectedCrewMappings(prev => {
+      const current = prev[newCrew.name];
+      return {
+        ...prev,
+        [newCrew.name]: {
+          rawName: newCrew.name,
+          roleHint: newCrew.role as any,
+          occurrenceCount: current?.occurrenceCount || 1,
+          matchedCrewId: newCrew.id,
+          matchedCrewName: newCrew.name,
+          matchedCrewRole: newCrew.role,
+          confidence: 'exact',
+          confidenceScore: 100,
+          similarityReason: `Kru baru '${newCrew.name}' berhasil didaftarkan ke database resmi AKK`,
           isUserOverridden: true,
           isNewlyCreated: true
         }
@@ -215,17 +302,23 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
   if (!isOpen) return null;
 
   // Handle Google Sign In
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (forceConsent: boolean = false) => {
     setIsAuthenticating(true);
     setAuthError(null);
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn(forceConsent);
       if (res) {
         setGoogleUser(res.user);
         setAccessToken(res.accessToken);
+        if (spreadsheetInput) {
+          // Re-attempt metadata fetch with newly acquired token
+          setTimeout(() => {
+            handleConnectSpreadsheet();
+          }, 200);
+        }
       }
     } catch (err: any) {
-      console.error('Google Sign In Error:', err);
+      console.warn('Google Sign In Notice:', err?.message || err);
       setAuthError(err.message || 'Gagal login ke akun Google.');
     } finally {
       setIsAuthenticating(false);
@@ -242,11 +335,6 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
 
   // Connect & Fetch Metadata
   const handleConnectSpreadsheet = async () => {
-    if (!accessToken) {
-      setAuthError('Silakan login dengan akun Google terlebih dahulu.');
-      return;
-    }
-
     const sheetId = googleSheetsApiService.extractSpreadsheetId(spreadsheetInput);
     if (!sheetId) {
       setPreviewError('Harap masukkan URL atau ID spreadsheet yang valid.');
@@ -274,25 +362,30 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
       // Load preview for this sheet
       await loadPreviewData(sheetId, defaultSheet, accessToken);
     } catch (err: any) {
-      console.error('Metadata fetch error:', err);
-      setPreviewError(err.message || 'Gagal menghubungkan ke Google Sheets.');
+      console.warn('Metadata fetch notice:', err?.message || err);
+      const isScopeErr = err?.message?.includes('insufficient authentication scopes') || err?.message?.includes('insufficient scopes') || err?.message?.includes('PERMISSION_DENIED');
+      if (isScopeErr) {
+        setPreviewError('Izin akses spreadsheet Google diperlukan. Silakan klik tombol "Login Ulang dengan Izin Spreadsheet" di bawah untuk memberikan izin membaca Google Sheets.');
+      } else {
+        setPreviewError(err?.message || 'Gagal menghubungkan ke Google Sheets.');
+      }
     } finally {
       setIsLoadingMetadata(false);
     }
   };
 
   // Load Preview Data
-  const loadPreviewData = async (sheetId: string, sheetTitle: string, token: string) => {
+  const loadPreviewData = async (sheetId: string, sheetTitle: string, token?: string | null) => {
     setIsLoadingPreview(true);
     setPreviewError(null);
     try {
-      const range = `${sheetTitle}!A1:Z80`;
+      const range = `${sheetTitle}!A:Z`;
       const rows = await googleSheetsApiService.getSheetValues(sheetId, range, token);
       const trips = googleSheetsApiService.parseScheduleRows(rows);
       setPreviewTrips(trips);
     } catch (err: any) {
-      console.error('Preview error:', err);
-      setPreviewError(err.message || 'Gagal membaca isi sel spreadsheet.');
+      console.warn('Preview notice:', err?.message || err);
+      setPreviewError(err?.message || 'Gagal membaca isi sel spreadsheet.');
     } finally {
       setIsLoadingPreview(false);
     }
@@ -303,31 +396,38 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
     const newConfig = { ...config, selectedSheetTitle: newTitle };
     setConfig(newConfig);
     googleSheetsApiService.saveConfig(newConfig);
-    if (config.spreadsheetId && accessToken) {
+    if (config.spreadsheetId) {
       loadPreviewData(config.spreadsheetId, newTitle, accessToken);
     }
   };
 
   // Execute Sync after validation & user confirmation
   const handleExecuteSync = async () => {
-    if (!accessToken || !config.spreadsheetId || !config.selectedSheetTitle) return;
+    if (!config.spreadsheetId || !config.selectedSheetTitle) {
+      setPreviewError('Harap tentukan spreadsheet dan sheet sebelum sinkronisasi.');
+      return;
+    }
 
     setShowConfirmDialog(false);
     setIsSyncing(true);
     setSyncResult(null);
+
+    // Yield control to let React render the loading animation
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     try {
       const syncOptions: ImportSyncOptions = {
         skipDuplicates,
         skipInvalid,
         overwriteDuplicates,
-        customAreaMapping: mappingDict
+        customAreaMapping: mappingDict,
+        customCrewMapping: crewMappingDict
       };
 
       const res = await googleSheetsApiService.syncToOperationalSchedule(
         config.spreadsheetId,
         config.selectedSheetTitle,
-        accessToken,
+        accessToken || undefined,
         syncOptions
       );
 
@@ -341,7 +441,7 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
       });
 
       if (onSyncComplete) {
-        onSyncComplete(res.syncedCount);
+        onSyncComplete(res.syncedCount + res.overwrittenCount);
       }
     } catch (err: any) {
       console.error('Sync error:', err);
@@ -425,7 +525,7 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
                 </button>
               ) : (
                 <button
-                  onClick={handleGoogleLogin}
+                  onClick={() => handleGoogleLogin(false)}
                   disabled={isAuthenticating}
                   className="inline-flex items-center gap-2.5 px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold shadow-md transition cursor-pointer border border-slate-300 self-start sm:self-center"
                 >
@@ -504,9 +604,21 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
             )}
 
             {previewError && (
-              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{previewError}</span>
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{previewError}</span>
+                </div>
+                {(previewError.toLowerCase().includes('izin') || previewError.toLowerCase().includes('scope')) && (
+                  <button
+                    type="button"
+                    onClick={() => handleGoogleLogin(true)}
+                    disabled={isAuthenticating}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow transition cursor-pointer whitespace-nowrap self-start sm:self-center"
+                  >
+                    {isAuthenticating ? 'Menghubungkan...' : 'Login Ulang dengan Izin Spreadsheet'}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -514,8 +626,8 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
           {/* 3. Validation Summary Report & Prevention Toggles / Intelligent Area Mapping */}
           {previewTrips.length > 0 && (
             <div className="space-y-4">
-              {/* Tab Switcher: Audit vs Area Mapping */}
-              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              {/* Tab Switcher: Audit vs Area Mapping vs Crew Mapping */}
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setActiveSyncTab('validation')}
@@ -550,6 +662,28 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
                     </span>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSyncTab('crew_mapping')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer relative ${
+                    activeSyncTab === 'crew_mapping'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5 text-blue-300" />
+                  <span>Pemetaan Kru Pengirim</span>
+                  {Object.values(detectedCrewMappings).some(m => m.confidence === 'unmapped') ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-500 text-white font-black animate-pulse">
+                      {Object.values(detectedCrewMappings).filter(m => m.confidence === 'unmapped').length} Belum Dikenali
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-300 font-mono">
+                      {Object.keys(detectedCrewMappings).length} Kru
+                    </span>
+                  )}
+                </button>
               </div>
 
               {activeSyncTab === 'area_mapping' ? (
@@ -559,6 +693,15 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
                     officialAreas={officialAreasList}
                     onMappingChange={handleMappingChange}
                     onRequestCreateArea={(rawArea) => setQuickCreateAreaTarget(rawArea)}
+                  />
+                </div>
+              ) : activeSyncTab === 'crew_mapping' ? (
+                <div className="max-h-[55vh] overflow-y-auto pr-1">
+                  <CrewAutoMappingSection
+                    crewMappings={detectedCrewMappings}
+                    officialCrews={officialCrewsList}
+                    onMappingChange={handleCrewMappingChange}
+                    onRequestCreateCrew={(rawCrew, roleHint) => setQuickCreateCrewTarget({ name: rawCrew, roleHint })}
                   />
                 </div>
               ) : (
@@ -938,6 +1081,15 @@ export const GoogleSheetsApiSyncModal: React.FC<GoogleSheetsApiSyncModalProps> =
           onClose={() => setQuickCreateAreaTarget(null)}
           rawAreaName={quickCreateAreaTarget || ''}
           onAreaCreated={handleAreaCreated}
+        />
+
+        {/* Quick Create Crew Dialog */}
+        <QuickCreateCrewModal
+          isOpen={quickCreateCrewTarget !== null}
+          onClose={() => setQuickCreateCrewTarget(null)}
+          rawCrewName={quickCreateCrewTarget?.name || ''}
+          roleHint={quickCreateCrewTarget?.roleHint || 'Driver'}
+          onCrewCreated={handleCrewCreated}
         />
 
       </div>

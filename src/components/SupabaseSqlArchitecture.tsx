@@ -27,10 +27,13 @@ import {
 } from 'lucide-react';
 import { logisticsStore } from '../services/store';
 import { googleSheetsSyncService, validateCoordinateData } from '../services/googleSheetsSyncService';
+import { testSupabaseConnection, sanitizeSupabaseUrl } from '../services/supabaseService';
 import { DATA_FIX_SHEET_PRESETS, sanitizeCoordinate } from './GoogleSheetsStoreSyncModal';
 import { RetailStore } from '../types';
 import { useToast } from '../context/ToastContext';
 import { LiveSyncHealthCard } from './LiveSyncHealthCard';
+import { SupabaseConnectivityMonitor } from './SupabaseConnectivityMonitor';
+import { DataBridgeMonitor } from './DataBridgeMonitor';
 
 export interface StoreDiffItem {
   id: string; // key
@@ -60,6 +63,7 @@ export const SupabaseSqlArchitecture: React.FC = () => {
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
+  const [connectionMessage, setConnectionMessage] = useState<string>('');
   const [isFixingSync, setIsFixingSync] = useState(false);
   const [diffFilter, setDiffFilter] = useState<'all' | 'issues' | 'synced'>('all');
   const [diffSearch, setDiffSearch] = useState('');
@@ -68,6 +72,16 @@ export const SupabaseSqlArchitecture: React.FC = () => {
   const [localStores, setLocalStores] = useState<RetailStore[]>(logisticsStore.getStores());
   const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());
   const [syncLogs, setSyncLogs] = useState(googleSheetsSyncService.getSyncLogs());
+
+  // Initialize Supabase config from store
+  useEffect(() => {
+    const conf = logisticsStore.getSupabaseConfig();
+    if (conf) {
+      setSupabaseUrl(conf.url || '');
+      setSupabaseAnonKey(conf.anonKey || '');
+      setConnectionStatus(conf.isConnected ? 'success' : 'idle');
+    }
+  }, []);
 
   useEffect(() => {
     const unsubStore = logisticsStore.subscribe(() => {
@@ -470,20 +484,21 @@ create policy "Tracking logs accessible by authenticated users"
     setTimeout(() => setCopiedSection(null), 2500);
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setConnectionStatus('testing');
-    setTimeout(() => {
-      if (supabaseUrl && supabaseAnonKey) {
-        setConnectionStatus('success');
-        logisticsStore.setSupabaseConfig({
-          url: supabaseUrl,
-          anonKey: supabaseAnonKey,
-          isConnected: true
-        });
-      } else {
-        setConnectionStatus('failed');
-      }
-    }, 800);
+    setConnectionMessage('');
+    const cleanUrl = sanitizeSupabaseUrl(supabaseUrl);
+    setSupabaseUrl(cleanUrl);
+
+    const res = await testSupabaseConnection(cleanUrl, supabaseAnonKey);
+    setConnectionMessage(res.message);
+    if (res.success) {
+      setConnectionStatus('success');
+      addNotification('schedule', 'Koneksi Supabase Berhasil', res.message);
+    } else {
+      setConnectionStatus('failed');
+      addNotification('sla_warning', 'Gagal Koneksi Supabase', res.message);
+    }
   };
 
   return (
@@ -516,6 +531,12 @@ create policy "Tracking logs accessible by authenticated users"
 
       {/* Visual Live Sync Health & Discrepancy Component */}
       <LiveSyncHealthCard />
+
+      {/* Real-time Supabase Connectivity Monitor */}
+      <SupabaseConnectivityMonitor />
+
+      {/* Automated DataBridge Service: Google Sheets API to Supabase Upsert Engine */}
+      <DataBridgeMonitor />
 
       {/* DEDICATED REAL-TIME DIFF & DEBUGGING DASHBOARD: GOOGLE SHEETS 'DATA FIX' VS LOCAL REGISTRY */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm space-y-6">
@@ -915,20 +936,32 @@ create policy "Tracking logs accessible by authenticated users"
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
           <div className="text-xs">
-            {connectionStatus === 'testing' && <span className="text-amber-400">Memverifikasi kredensial...</span>}
-            {connectionStatus === 'success' && <span className="text-emerald-400 font-semibold">Tersambung ke Supabase Client!</span>}
-            {connectionStatus === 'failed' && <span className="text-red-400">Masukkan URL dan Anon Key terlebih dahulu.</span>}
+            {connectionStatus === 'testing' && <span className="text-amber-400">Memverifikasi kredensial & kesehatan API Supabase...</span>}
+            {connectionStatus === 'success' && <span className="text-emerald-400 font-semibold">Tersambung ke Supabase Project!</span>}
+            {connectionStatus === 'failed' && <span className="text-red-400 font-semibold">Koneksi Gagal Diuji.</span>}
+            {connectionStatus === 'idle' && <span className="text-slate-500">Klik tombol di kanan untuk menguji koneksi.</span>}
           </div>
 
           <button
             onClick={handleTestConnection}
-            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow transition cursor-pointer"
+            disabled={connectionStatus === 'testing'}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold shadow transition cursor-pointer"
           >
-            Uji & Simpan Koneksi
+            {connectionStatus === 'testing' ? 'Sedang Menguji...' : 'Uji & Simpan Koneksi'}
           </button>
         </div>
+
+        {connectionMessage && (
+          <div className={`p-3 rounded-lg text-xs whitespace-pre-line border ${
+            connectionStatus === 'success'
+              ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+              : 'bg-red-950/40 border-red-800 text-red-300'
+          }`}>
+            {connectionMessage}
+          </div>
+        )}
       </div>
 
       {/* SQL Script Viewer */}

@@ -244,25 +244,24 @@ export class ScheduleInitializerService {
 
       if (!matchedStore) {
         if (!createdStoresMap.has(config.storeName)) {
-          const storeCode = 'STR-' + config.city.substring(0, 3).toUpperCase() + '-' + Math.floor(Math.random() * 899 + 100);
-          const newStore: RetailStore = {
-            id: 'str-smart-' + config.dayName.toLowerCase() + '-' + idx,
-            storeCode,
+          const areaDestination: RetailStore = {
+            id: 'area-dest-' + config.dayName.toLowerCase() + '-' + idx,
+            storeCode: 'AREA-' + config.city.substring(0, 3).toUpperCase(),
             storeName: config.storeName,
             island: config.island,
             province: config.province,
             city: config.city,
-            address: `Jl. Raya Utama Distribusi No. ${idx + 12}, ${config.city}`,
+            address: `Area Koridor Distribusi & Rute ${config.storeName}`,
             latitude: -8.2192 + (Math.random() - 0.5) * 0.4,
             longitude: 114.3692 + (Math.random() - 0.5) * 0.5,
-            contactPerson: `Manager Logistik ${config.city}`,
-            phone: '0812' + Math.floor(Math.random() * 89999999 + 10000000),
+            contactPerson: `PIC Logistik Area ${config.city}`,
+            phone: '0812-3456-7890',
             deliveryWindow: '08:00 - 17:00',
             storeCategory: config.category === 'Grosir' ? 'Distribution Hub' : (config.category === 'Inter-Island' ? 'Hypermarket' : 'Supermarket')
           };
-          createdStoresMap.set(config.storeName, newStore);
-          logisticsStore.addStore(newStore);
-          matchedStore = newStore;
+          createdStoresMap.set(config.storeName, areaDestination);
+          // Do not add to retail stores collection since this is a delivery route area, not a retail customer store
+          matchedStore = areaDestination;
         } else {
           matchedStore = createdStoresMap.get(config.storeName)!;
         }
@@ -527,7 +526,16 @@ export class ScheduleInitializerService {
    */
   public static isWeeklyScheduleInitialized(): boolean {
     const schedules = logisticsStore.getSchedules();
-    return schedules.some(s => s.trackingNumber.startsWith('TRK-') && (
+    if (schedules && schedules.length > 5) {
+      return true; // Already populated with real/synced schedules
+    }
+    try {
+      if (localStorage.getItem('akk_weekly_schedule_initialized') === 'true') {
+        return true;
+      }
+    } catch {}
+
+    const hasInitialized = schedules.some(s => s.trackingNumber.startsWith('TRK-') && (
       s.notes?.includes('Rute Rutin') || 
       s.notes?.includes('Prioritas Luar Kota') ||
       s.trackingNumber.includes('SEN') ||
@@ -537,5 +545,13 @@ export class ScheduleInitializerService {
       s.trackingNumber.includes('JUM') ||
       s.trackingNumber.includes('SAB')
     ));
+
+    if (hasInitialized) {
+      try {
+        localStorage.setItem('akk_weekly_schedule_initialized', 'true');
+      } catch {}
+    }
+
+    return hasInitialized;
   }
 }

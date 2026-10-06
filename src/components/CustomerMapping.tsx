@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Store, MapPin, Search, Filter, Plus, Compass, Navigation, Phone, Clock, Layers, Building2, Trash2, FileSpreadsheet, RefreshCw, Route, Maximize2, Minimize2, Star, Users, Target, Circle, Download, CheckCircle2, X } from 'lucide-react';
 import { LeafletMap } from './LeafletMap';
 import { RetailStore } from '../types';
-import { logisticsStore } from '../services/store';
+import { logisticsStore, isAreaRouteItem } from '../services/store';
 import { GoogleSheetsStoreSyncModal } from './GoogleSheetsStoreSyncModal';
 import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
@@ -15,8 +15,8 @@ interface CustomerMappingProps {
 
 export const CustomerMapping: React.FC<CustomerMappingProps> = ({ onScheduleForStore }) => {
   const [stores, setStores] = useState<RetailStore[]>(() => {
-    const s = logisticsStore.getStores();
-    console.log(`[CustomerMapping INITIAL] Loaded ${s.length} stores from database.`);
+    const s = logisticsStore.getStores().filter(store => !isAreaRouteItem(store));
+    console.log(`[CustomerMapping INITIAL] Loaded ${s.length} verified retail stores from database.`);
     return s.map((store, idx) => normalizeStoreWithCoordinates(store, idx));
   });
   const [syncConfig, setSyncConfig] = useState(googleSheetsSyncService.getConfig());

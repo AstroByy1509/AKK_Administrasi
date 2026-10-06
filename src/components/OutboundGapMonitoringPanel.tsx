@@ -459,10 +459,10 @@ export const OutboundGapMonitoringPanel: React.FC<OutboundGapMonitoringPanelProp
                         </span>
                       </div>
 
-                      {/* Store / Destination */}
+                      {/* Area Kirim / Destination */}
                       <div className="font-bold text-white text-sm flex items-center gap-1.5 mt-1">
                         <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span className="truncate">{s.store?.storeName || 'Toko Tujuan Luar Kota'}</span>
+                        <span className="truncate">{s.areaName || s.store?.storeName || 'Area Tujuan Luar Kota'}</span>
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5">
                         {s.store?.city}, {s.store?.island} • {s.cargoWeightTon} Ton ({s.cargoDescription || 'Logistik'})

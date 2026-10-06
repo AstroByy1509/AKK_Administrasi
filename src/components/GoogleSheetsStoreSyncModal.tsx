@@ -775,8 +775,17 @@ export const GoogleSheetsStoreSyncModal: React.FC<GoogleSheetsStoreSyncModalProp
     setIsFetching(true);
     try {
       const csvUrl = spreadsheetUrl.replace('/edit#gid=', '/export?format=csv&gid=').replace('/edit?usp=sharing', '/export?format=csv');
-      const response = await fetch(csvUrl);
-      if (response.ok) {
+      let response: Response | null = null;
+      try {
+        const proxyRes = await fetch(`/api/proxy-sheet?url=${encodeURIComponent(csvUrl)}`);
+        if (proxyRes.ok) response = proxyRes;
+      } catch {
+        // Fallback to direct fetch
+      }
+      if (!response) {
+        response = await fetch(csvUrl);
+      }
+      if (response && response.ok) {
         const csvText = await response.text();
         const res = googleSheetsSyncService.importCsvData(csvText);
         setParsedStores(res.stores.map((s, i) => ({

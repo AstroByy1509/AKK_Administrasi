@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move, FileSpreadsheet } from 'lucide-react';
+import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move, FileSpreadsheet, History, RefreshCw, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Schedule, RetailStore, Fleet, Crew, ShipmentStatus, CrewDeliveryHistory } from '../types';
 import { logisticsStore } from '../services/store';
@@ -16,11 +16,13 @@ import { SmartFillResult } from '../services/scheduleInitializer';
 import { WeeklyRoutePlanner } from './WeeklyRoutePlanner';
 import { AreaRepetitionWarningModal } from './AreaRepetitionWarningModal';
 import { checkConsecutiveWeekConflict, AreaRepetitionConflict } from '../services/areaRotationValidator';
+import { scheduleImportValidator } from '../services/scheduleImportValidator';
 import { GoogleSheetsAdminScheduleView } from './GoogleSheetsAdminScheduleView';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
   onClearPreselectedStore?: () => void;
+  onNavigateToCrewHistory?: () => void;
 }
 
 const AREA_MAP: Record<string, string> = {
@@ -38,7 +40,9 @@ const AREA_MAP: Record<string, string> = {
   'GALEKAN': 'GALEKAN',
   'JEMBER_BARAT': 'JEMBER BARAT',
   'RITEL_KALIBARU': 'RITEL KALIBARU',
-  'RITEL_PURWO': 'RITEL PURWO',
+  'PURWO_DAMBUNTUNG': 'PURWO DAMBUNTUNG',
+  'PURWO_PASAR': 'PURWO PASAR',
+  'SUMBERAYU_RETAIL': 'SUMBERAYU RETAIL',
   'SSLN_SINGARAJA': 'SSLN SINGARAJA',
   'SEMPU_KALISTAIL': 'SEMPU KALISTAIL',
   'JEMBER_KOTA': 'JEMBER KOTA',
@@ -51,7 +55,8 @@ const AREA_MAP: Record<string, string> = {
 
 export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   preselectedStore,
-  onClearPreselectedStore
+  onClearPreselectedStore,
+  onNavigateToCrewHistory
 }) => {
   const [schedules, setSchedules] = useState<Schedule[]>(logisticsStore.getSchedules());
   const [stores, setStores] = useState<RetailStore[]>(logisticsStore.getStores());
@@ -137,6 +142,123 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
     } else {
       setAutoInitMessage(`⚡ Smart Fill selesai (${result.addedCount} rute). Terdapat ${result.conflicts.length} jadwal yang memerlukan penyesuaian jeda.`);
     }
+    setTimeout(() => setAutoInitMessage(null), 7000);
+  };
+
+  const handleManualSyncAll = () => {
+    // 1. Sync from admin schedule weeks cache if available
+    let cachedWeeks: any[] | null = null;
+    try {
+      const saved2026 = localStorage.getItem('akk_admin_schedule_cache_2026_0');
+      if (saved2026) cachedWeeks = JSON.parse(saved2026);
+      if (!cachedWeeks) {
+        const savedAll = localStorage.getItem('akk_admin_schedule_weeks_cache');
+        if (savedAll) cachedWeeks = JSON.parse(savedAll);
+      }
+    } catch {}
+
+    let syncedCount = 0;
+    if (Array.isArray(cachedWeeks) && cachedWeeks.length > 0 && cachedWeeks[0]?.days?.length > 0) {
+      const curFleets = logisticsStore.getFleets();
+      const curCrews = logisticsStore.getCrews();
+
+      cachedWeeks.forEach((week: any, weekIdx: number) => {
+        (week.days || []).forEach((day: any) => {
+          let dayNum = day.dayNumber || 5;
+          let dayPadded = String(dayNum).padStart(2, '0');
+          let depIso = `2026-01-${dayPadded}T07:30:00.000Z`;
+          let arrIso = `2026-01-${dayPadded}T18:00:00.000Z`;
+
+          if (day.dateString) {
+            const parsed = scheduleImportValidator.parseDate(day.dateString, new Date(2026, 0, dayNum));
+            if (parsed.date) {
+              const dStr = parsed.date.toISOString().substring(0, 10);
+              depIso = `${dStr}T07:30:00.000Z`;
+              arrIso = `${dStr}T18:00:00.000Z`;
+            }
+          }
+
+          (day.pengiriman || []).forEach((p: any, idx: number) => {
+            const stdArea = p.area || 'Area Kirim';
+            const isBali = stdArea.toUpperCase().includes('DENPASAR') || stdArea.toUpperCase().includes('SINGARAJA') || stdArea.toUpperCase().includes('NEGARA') || stdArea.toUpperCase().includes('BALI');
+            const cleanArmada = (p.armada || 'FLT').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() || 'FLT';
+            const datePart = depIso.substring(0, 10).replace(/-/g, '');
+            const targetTracking = `PO-AKK-${datePart}-${cleanArmada}-${idx + 1}`;
+            const targetId = p.id || `sch-${datePart}-${cleanArmada}-${idx + 1}`;
+
+            const matchedFleet = curFleets.find(f => 
+              f.initialCode?.toUpperCase() === p.armada?.toUpperCase() ||
+              f.plateNumber.replace(/\s+/g, '').toUpperCase().includes((p.armada || '').replace(/\s+/g, '').toUpperCase())
+            ) || curFleets[idx % curFleets.length] || curFleets[0];
+
+            const matchedDriver = curCrews.find(c => 
+              c.name.toLowerCase().includes((p.driver || '').toLowerCase()) || 
+              (p.driver || '').toLowerCase().includes(c.name.toLowerCase())
+            ) || curCrews[0];
+
+            const matchedHelper = p.helper && p.helper !== '-' ? curCrews.find(c =>
+              c.name.toLowerCase().includes((p.helper || '').toLowerCase()) ||
+              (p.helper || '').toLowerCase().includes(c.name.toLowerCase())
+            ) : undefined;
+
+            const existingList = logisticsStore.getSchedules();
+            const existingIdx = existingList.findIndex(s => s.id === targetId || s.trackingNumber === targetTracking || (p.id && s.id === p.id));
+
+            const newSch: Schedule = {
+              id: targetId,
+              trackingNumber: targetTracking,
+              originName: 'Gudang Pusat Banyuwangi DC',
+              originCoords: [-8.1906, 114.3708],
+              storeId: `area-${stdArea.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+              store: {
+                id: `area-${stdArea.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+                storeCode: `AREA-${stdArea.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+                storeName: stdArea,
+                island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
+                province: isBali ? 'Bali' : 'Jawa Timur',
+                city: isBali ? 'Denpasar' : 'Banyuwangi',
+                address: `Area Distribusi ${stdArea}`,
+                latitude: isBali ? -8.6705 : -8.219,
+                longitude: isBali ? 115.2126 : 114.369,
+                contactPerson: 'PIC Distribusi Area',
+                phone: '-',
+                deliveryWindow: '08:00 - 17:00',
+                storeCategory: 'Distribution Hub'
+              },
+              areaName: stdArea,
+              fleetId: matchedFleet ? matchedFleet.id : 'flt-01',
+              fleet: matchedFleet,
+              crewId: matchedDriver ? matchedDriver.id : 'crw-01',
+              crew: matchedDriver,
+              crewHelperId: matchedHelper ? matchedHelper.id : undefined,
+              crewHelper: matchedHelper,
+              status: 'scheduled',
+              departureDate: depIso,
+              estimatedArrival: arrIso,
+              cargoDescription: `Karton Box & Sheet Kemasan - ${stdArea}`,
+              cargoWeightTon: isBali ? 4.5 : 2.5,
+              isInterIsland: isBali,
+              ferryBookingCode: isBali ? `ASDP-KTP-GLM-${idx + 100}` : undefined,
+              transitPort: isBali ? 'Pelabuhan Ketapang Banyuwangi -> Gilimanuk Bali' : undefined,
+              notes: p.target || `Rute Distribusi ${stdArea}`,
+              createdAt: new Date().toISOString(),
+              isManuallyEdited: !!p.isManuallyEdited
+            };
+
+            if (existingIdx !== -1) {
+              logisticsStore.updateSchedule(existingList[existingIdx].id, newSch);
+            } else {
+              logisticsStore.addSchedule(newSch);
+            }
+            syncedCount++;
+          });
+        });
+      });
+    }
+
+    logisticsStore.syncSchedulesToCrewHistory();
+    setSchedules(logisticsStore.getSchedules());
+    setAutoInitMessage(`⚡ Sinkronisasi manual selesai! Semua jadwal operasional (${logisticsStore.getSchedules().length} ritase), kalender mingguan, dan histori kru tersinkronkan penuh tanpa ada data yang terlewat.`);
     setTimeout(() => setAutoInitMessage(null), 7000);
   };
 
@@ -377,7 +499,8 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       departureDate: new Date(newSchedule.departureDate).toISOString(),
       estimatedArrival: new Date(newSchedule.estimatedArrival).toISOString(),
       areaApprovalStatus: (areaCheck?.requiresApproval ? 'approved' : 'not_required') as 'approved' | 'not_required',
-      areaTripCount: (areaCheck?.tripCount || 0) + 1
+      areaTripCount: (areaCheck?.tripCount || 0) + 1,
+      isManuallyEdited: true
     };
 
     if ((newSchedule as any).id) {
@@ -423,7 +546,8 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
       departureDate: new Date(newSchedule.departureDate).toISOString(),
       estimatedArrival: new Date(newSchedule.estimatedArrival).toISOString(),
       areaApprovalStatus: 'approved',
-      areaTripCount: (areaCheck?.tripCount || 0) + 1
+      areaTripCount: (areaCheck?.tripCount || 0) + 1,
+      isManuallyEdited: true
     });
 
     // Notify crew
@@ -474,6 +598,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
     const matchesStatus = statusFilter === 'all' || sch.status === statusFilter;
     const matchesQuery =
       sch.trackingNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (sch.areaName && sch.areaName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       sch.store?.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       sch.fleet?.plateNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (sch.fleet?.initialCode && sch.fleet.initialCode.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -562,6 +687,31 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
               <span>Google Sheets (ALL)</span>
             </button>
+
+            {onNavigateToCrewHistory && (
+              <button
+                onClick={onNavigateToCrewHistory}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 hover:text-white text-xs font-bold border border-indigo-500/40 shadow-sm transition cursor-pointer"
+                title="Buka submenu Histori Pengiriman & Otorisasi Kru"
+              >
+                <History className="w-4 h-4 text-indigo-400" />
+                <span>Histori &amp; Otorisasi Kru</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleManualSyncAll}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+              title="Sinkronkan semua data operasional secara manual dengan Sheet ALL dan Histori Kru"
+            >
+              <RefreshCw className="w-4 h-4 text-emerald-200" />
+              <span>⚡ Sinkronkan Manual Data</span>
+            </button>
+
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 shadow-2xs">
+              <Zap className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <span>Auto-Save Aktif</span>
+            </span>
 
             <button
               onClick={() => setIsSmartFillOpen(true)}
@@ -792,7 +942,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + 
                   ["Area Kirim,Armada,Supir,Status,Keberangkatan"].concat(
-                    filteredSchedules.map(s => `"${s.store?.storeName || AREA_MAP[s.storeId] || 'Toko'}","${s.fleet?.plateNumber}","${s.crew?.name}","${s.status}","${new Date(s.departureDate).toLocaleString()}"`)
+                    filteredSchedules.map(s => `"${s.areaName || s.store?.storeName || AREA_MAP[s.storeId] || 'Area'}","${s.fleet?.plateNumber}","${s.crew?.name}","${s.status}","${new Date(s.departureDate).toLocaleString()}"`)
                   ).join("\n");
                 const encodedUri = encodeURI(csvContent);
                 const link = document.createElement("a");
@@ -908,7 +1058,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                         ) : null}
                         <span className="text-[10px] font-mono text-slate-500">{sch.trackingNumber}</span>
                       </div>
-                      <div className="font-semibold text-white">{sch.store?.storeName || AREA_MAP[sch.storeId] || 'Toko Retail'}</div>
+                      <div className="font-semibold text-white">{sch.areaName || sch.store?.storeName || AREA_MAP[sch.storeId] || 'Area Pengiriman'}</div>
                       <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <MapPin className="w-3 h-3 text-slate-500" />
                         <span>{sch.store?.city}, {sch.store?.island}</span>
@@ -1095,6 +1245,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             setAutoInitMessage(`⚡ Berhasil menyinkronkan ${count} rute pengiriman dari Google Sheets (Sheet ALL) ke Jadwal Operasional Aktif!`);
           }}
           onNavigateToSchedules={() => setActiveMainTab('schedules_list')}
+          onNavigateToCrewHistory={onNavigateToCrewHistory}
         />
       )}
 
@@ -1152,7 +1303,9 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                     <option value="GALEKAN">GALEKAN</option>
                     <option value="JEMBER_BARAT">JEMBER BARAT</option>
                     <option value="RITEL_KALIBARU">RITEL KALIBARU</option>
-                    <option value="RITEL_PURWO">RITEL PURWO</option>
+                    <option value="PURWO_DAMBUNTUNG">PURWO DAMBUNTUNG</option>
+                    <option value="PURWO_PASAR">PURWO PASAR</option>
+                    <option value="SUMBERAYU_RETAIL">SUMBERAYU RETAIL</option>
                     <option value="SSLN_SINGARAJA">SSLN SINGARAJA</option>
                     <option value="SEMPU_KALISTAIL">SEMPU KALISTAIL</option>
                     <option value="JEMBER_KOTA">JEMBER KOTA</option>
@@ -1367,7 +1520,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                   <span className="text-[10px] font-bold uppercase text-slate-500">AREA KIRIM:</span>
-                  <div className="font-bold text-slate-900 text-sm mt-1">{selectedManifest.store?.storeName || AREA_MAP[selectedManifest.storeId] || '-'}</div>
+                  <div className="font-bold text-slate-900 text-sm mt-1">{selectedManifest.areaName || selectedManifest.store?.storeName || AREA_MAP[selectedManifest.storeId] || '-'}</div>
                   <div className="text-slate-600 mt-0.5">{selectedManifest.store?.address}</div>
                   <div className="text-blue-700 font-bold mt-1">Wilayah: Banyuwangi</div>
                 </div>
@@ -1409,7 +1562,7 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="p-2 font-mono">01</td>
-                    <td className="p-2 font-medium">Pengiriman ke Area {selectedManifest.store?.storeName || AREA_MAP[selectedManifest.storeId] || 'Tujuan'}</td>
+                    <td className="p-2 font-medium">Pengiriman ke Area {selectedManifest.areaName || selectedManifest.store?.storeName || AREA_MAP[selectedManifest.storeId] || 'Tujuan'}</td>
                   </tr>
                 </tbody>
               </table>

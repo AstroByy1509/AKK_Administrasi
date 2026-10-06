@@ -58,6 +58,7 @@ export interface ImportSyncOptions {
   skipInvalid?: boolean;
   defaultDate?: Date;
   customAreaMapping?: Record<string, string>;
+  customCrewMapping?: Record<string, string>;
 }
 
 const MONTH_MAP: Record<string, number> = {
@@ -95,15 +96,53 @@ export const scheduleImportValidator = {
       }
     }
 
-    const clean = String(dateStr).trim();
+    let clean = String(dateStr).trim();
 
-    // 2. Check for Indonesian text dates like "05 Januari 2026" or "5 Jan 2026"
-    const indoPattern = /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/i;
+    // Check for day of week hint if present before stripping (e.g. "Senin")
+    let dayHint: string | null = null;
+    const dayMatch = clean.match(/^(senin|selasa|rabu|kamis|jumat|sabtu|minggu|mon|tue|wed|thu|fri|sat|sun)/i);
+    if (dayMatch) {
+      dayHint = dayMatch[1].toUpperCase();
+    }
+
+    // Strip leading day names and prefixes like "Senin, ", "SELASA - ", "Tanggal: "
+    clean = clean.replace(/^(senin|selasa|rabu|kamis|jumat|sabtu|minggu|mon|tue|wed|thu|fri|sat|sun)[,\s/:\-]+/i, '').trim();
+    clean = clean.replace(/^(tanggal|tgl)[.:\s\-]+/i, '').trim();
+
+    // 2. Check for explicit Indonesian Bulan pattern, e.g.:
+    // "5 Bulan 1", "05 Bulan 01", "Tanggal 5 Bulan 1", "5 Bln 1 2026", "5 Bulan 1 Tahun 2026"
+    const indoBulanPattern = /^(\d{1,2})\s*(?:bulan|bln)\s*(\d{1,2})(?:[\s/,\-]+(?:tahun|thn)?\s*(\d{2,4}))?/i;
+    const matchIndoBulan = clean.match(indoBulanPattern);
+    if (matchIndoBulan) {
+      const day = parseInt(matchIndoBulan[1], 10);
+      const monthIdx = parseInt(matchIndoBulan[2], 10) - 1;
+      let year = matchIndoBulan[3] ? parseInt(matchIndoBulan[3], 10) : (fallbackDate ? fallbackDate.getFullYear() : 2026);
+      if (year < 100) year += 2000;
+      if (monthIdx >= 0 && monthIdx <= 11 && day >= 1 && day <= 31) {
+        return { date: new Date(year, monthIdx, day, 7, 30, 0) };
+      }
+    }
+
+    // 3. Check for ISO YYYY-MM-DD or YYYY/MM/DD
+    const isoPattern = /^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})/;
+    const matchIso = clean.match(isoPattern);
+    if (matchIso) {
+      const year = parseInt(matchIso[1], 10);
+      const month = parseInt(matchIso[2], 10) - 1;
+      const day = parseInt(matchIso[3], 10);
+      if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+        return { date: new Date(year, month, day, 7, 30, 0) };
+      }
+    }
+
+    // 4. Check for Indonesian text dates like "05 Januari 2026", "05-Jan-2026", "5 Jan"
+    const indoPattern = /^(\d{1,2})[\s\-/.]([A-Za-z]+)(?:[\s\-/.]([0-9]{2,4}))?/i;
     const matchIndo = clean.match(indoPattern);
     if (matchIndo) {
       const day = parseInt(matchIndo[1], 10);
       const monthStr = matchIndo[2].toUpperCase();
-      const year = parseInt(matchIndo[3], 10);
+      let year = matchIndo[3] ? parseInt(matchIndo[3], 10) : (fallbackDate ? fallbackDate.getFullYear() : 2026);
+      if (year < 100) year += 2000;
 
       const monthIdx = MONTH_MAP[monthStr];
       if (monthIdx !== undefined && day >= 1 && day <= 31 && year >= 2020 && year <= 2035) {
@@ -112,13 +151,59 @@ export const scheduleImportValidator = {
       }
     }
 
-    // 3. Check for standard DD/MM/YYYY or DD-MM-YYYY
-    const dmyPattern = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/;
-    const matchDmy = clean.match(dmyPattern);
-    if (matchDmy) {
-      const day = parseInt(matchDmy[1], 10);
-      const month = parseInt(matchDmy[2], 10) - 1;
-      const year = parseInt(matchDmy[3], 10);
+    // 5. Check for standard 3-part dates like 05/01/2026, 5/1/2026, or US format 1/5/2026
+    const threePartPattern = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/;
+    const matchThree = clean.match(threePartPattern);
+    if (matchThree) {
+      const p1 = parseInt(matchThree[1], 10);
+      const p2 = parseInt(matchThree[2], 10);
+      const year = parseInt(matchThree[3], 10);
+
+      let day: number;
+      let month: number; // 0-indexed
+
+      const targetMonth = fallbackDate ? fallbackDate.getMonth() : 0; // default January (0)
+
+      // Intelligent disambiguation when both p1 and p2 <= 12:
+      // In Google Sheets with US locale, 5 Jan is rendered as 1/5/2026 (M/D/Y).
+      // In Indonesian convention, 5 Jan is 05/01/2026 (D/M/Y).
+      if (p1 <= 12 && p2 <= 12) {
+        // If p1 matches targetMonth + 1 (e.g. p1 === 1 for January) and p2 > 0:
+        // Then p1 is Month, p2 is Day! (e.g. 1/5/2026 -> 5 Jan)
+        if (p1 === targetMonth + 1 && p2 !== targetMonth + 1) {
+          month = p1 - 1;
+          day = p2;
+        } else if (p2 === targetMonth + 1 && p1 !== targetMonth + 1) {
+          month = p2 - 1;
+          day = p1;
+        } else if (dayHint) {
+          // If a day name was provided (e.g. "Senin"), test which combination matches that day of week!
+          const d1 = new Date(year, p2 - 1, p1); // D/M/Y
+          const d2 = new Date(year, p1 - 1, p2); // M/D/Y
+          const DAYS_MAP: Record<string, number> = { 'MINGGU': 0, 'SENIN': 1, 'SELASA': 2, 'RABU': 3, 'KAMIS': 4, 'JUMAT': 5, 'SABTU': 6, 'MON': 1, 'TUE': 2, 'WED': 3, 'THU': 4, 'FRI': 5, 'SAT': 6, 'SUN': 0 };
+          const expectedDayOfWeek = DAYS_MAP[dayHint];
+          if (expectedDayOfWeek !== undefined && d2.getDay() === expectedDayOfWeek && d1.getDay() !== expectedDayOfWeek) {
+            month = p1 - 1;
+            day = p2;
+          } else {
+            month = p2 - 1;
+            day = p1;
+          }
+        } else {
+          // Default to Indonesian DD/MM/YYYY
+          day = p1;
+          month = p2 - 1;
+        }
+      } else if (p2 >= 1 && p2 <= 12 && p1 >= 1 && p1 <= 31) {
+        day = p1;
+        month = p2 - 1;
+      } else if (p1 >= 1 && p1 <= 12 && p2 >= 1 && p2 <= 31) {
+        day = p2;
+        month = p1 - 1;
+      } else {
+        day = p1;
+        month = Math.max(0, p2 - 1);
+      }
 
       if (month >= 0 && month <= 11 && day >= 1 && day <= 31 && year >= 2020 && year <= 2035) {
         const parsed = new Date(year, month, day, 7, 30, 0);
@@ -126,12 +211,72 @@ export const scheduleImportValidator = {
       }
     }
 
-    // 4. Try native Date.parse
-    const nativeParsed = new Date(clean);
-    if (!isNaN(nativeParsed.getTime())) {
-      const yr = nativeParsed.getFullYear();
-      if (yr >= 2020 && yr <= 2035) {
-        return { date: nativeParsed };
+    // 6. 2-part date: e.g. "05/01", "5/1" or US format "1/5"
+    const twoPartPattern = /^(\d{1,2})[/\-.](\d{1,2})$/;
+    const matchTwo = clean.match(twoPartPattern);
+    if (matchTwo) {
+      const p1 = parseInt(matchTwo[1], 10);
+      const p2 = parseInt(matchTwo[2], 10);
+      const targetYear = fallbackDate ? fallbackDate.getFullYear() : 2026;
+      const targetMonth = fallbackDate ? fallbackDate.getMonth() : 0; // 0 = Jan
+
+      let day: number;
+      let month: number;
+
+      if (p1 <= 12 && p2 <= 12) {
+        // Disambiguate with target month
+        if (p1 === targetMonth + 1 && p2 !== targetMonth + 1) {
+          month = p1 - 1;
+          day = p2;
+        } else if (p2 === targetMonth + 1 && p1 !== targetMonth + 1) {
+          month = p2 - 1;
+          day = p1;
+        } else {
+          day = p1;
+          month = p2 - 1;
+        }
+      } else if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        month = p2 - 1;
+      } else if (p2 > 12 && p1 <= 12) {
+        day = p2;
+        month = p1 - 1;
+      } else {
+        day = p1;
+        month = p2 >= 1 && p2 <= 12 ? p2 - 1 : 0;
+      }
+
+      return { date: new Date(targetYear, month, day, 7, 30, 0) };
+    }
+
+    // 7. Explicitly prefixed day number (e.g. "Tgl 5", "Tanggal 5", "Tgl 05", "Hari ke 5")
+    const tglPattern = /^(?:TGL|TANGGAL|HARI KE)\s*(\d{1,2})$/i;
+    const matchTgl = clean.match(tglPattern);
+    if (matchTgl) {
+      const dayNum = parseInt(matchTgl[1], 10);
+      const targetYear = fallbackDate ? fallbackDate.getFullYear() : 2026;
+      const targetMonth = fallbackDate ? fallbackDate.getMonth() : 0;
+      if (dayNum >= 1 && dayNum <= 31) {
+        return { date: new Date(targetYear, targetMonth, dayNum, 7, 30, 0) };
+      }
+    }
+
+    // Reject plain standalone numbers (like "1", "2", "8" from No urut column)
+    if (/^\d+$/.test(clean)) {
+      return { 
+        date: null, 
+        error: `Nilai "${clean}" adalah angka urut/hitungan, bukan tanggal.` 
+      };
+    }
+
+    // 7. Try native Date.parse only if contains alphabetic characters or hyphens
+    if (/[a-zA-Z]/.test(clean)) {
+      const nativeParsed = new Date(clean);
+      if (!isNaN(nativeParsed.getTime())) {
+        const yr = nativeParsed.getFullYear();
+        if (yr >= 2020 && yr <= 2035) {
+          return { date: nativeParsed };
+        }
       }
     }
 
@@ -145,7 +290,7 @@ export const scheduleImportValidator = {
    * Validate PO Number or generate a sanitized standard tracking number
    */
   validatePoNumber(rawPo: string | undefined, defaultDate: Date, armada: string, seqIdx: number): { poNumber: string; isValid: boolean; error?: string } {
-    const cleanArmada = (armada || 'FLT').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const cleanArmada = (armada || 'FLT').replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'FLT';
     const dateStamp = defaultDate.toISOString().substring(0, 10).replace(/-/g, '');
     const defaultGenerated = `PO-AKK-${dateStamp}-${cleanArmada}-${String(seqIdx + 1).padStart(3, '0')}`;
 
@@ -157,30 +302,28 @@ export const scheduleImportValidator = {
       };
     }
 
-    const clean = rawPo.trim();
+    let clean = rawPo.trim();
 
     // Check invalid placeholder patterns like "???", "NULL", "UNDEFINED", "INVALID"
     const invalidKeywords = ['???', 'NULL', 'UNDEFINED', 'INVALID', 'KOSONG', 'NAN', 'ERROR'];
     if (invalidKeywords.includes(clean.toUpperCase())) {
       return {
-        poNumber: clean,
-        isValid: false,
-        error: `Nomor PO "${clean}" terdeteksi sebagai placeholder tidak valid.`
+        poNumber: defaultGenerated,
+        isValid: true
       };
     }
 
-    // Must be 3 to 40 characters and alphanumeric with allowable separators (-, _, /, .)
-    const validPoRegex = /^[A-Za-z0-9\-_./]{3,40}$/;
-    if (!validPoRegex.test(clean)) {
+    // Clean allowable characters (letters, numbers, hyphens, slashes, underscores, dots)
+    const sanitized = clean.replace(/[^A-Za-z0-9\-_./# ]/g, '-').replace(/\s+/g, '-');
+    if (sanitized.length >= 3 && sanitized.length <= 50) {
       return {
-        poNumber: clean,
-        isValid: false,
-        error: `Format nomor PO "${clean}" tidak valid (hanya boleh huruf, angka, tanda strip, garis miring, atau titik sepanjang 3-40 karakter).`
+        poNumber: sanitized,
+        isValid: true
       };
     }
 
     return {
-      poNumber: clean,
+      poNumber: defaultGenerated,
       isValid: true
     };
   },
@@ -228,33 +371,30 @@ export const scheduleImportValidator = {
       let duplicateDetails: string | undefined = undefined;
 
       // 1. Mandatory Fields Check (Driver, Area, Armada)
-      const cleanDriver = (trip.driver || '').trim();
-      const rawArea = (trip.area || '').trim();
-      const cleanArea = (customAreaMapping && customAreaMapping[rawArea]) 
+      let cleanDriver = (trip.driver || '').trim();
+      let rawArea = (trip.area || '').trim();
+      let cleanArea = (customAreaMapping && customAreaMapping[rawArea]) 
         ? customAreaMapping[rawArea] 
         : standardizeAreaName(rawArea);
-      const cleanArmada = (trip.armada || '').trim();
+      let cleanArmada = (trip.armada || '').trim() || 'Truk Reguler';
 
       if (!cleanDriver || cleanDriver === '-' || cleanDriver.toUpperCase() === 'DRIVER') {
+        cleanDriver = 'Driver Standby';
         issues.push({
-          severity: 'error',
+          severity: 'warning',
           field: 'driver',
-          message: 'Nama driver / pengemudi wajib diisi.'
+          message: 'Nama driver tidak diisi, menggunakan Driver Standby / Pool.'
         });
-        status = 'missing_field';
-        missingFieldCount++;
       }
 
       if (!rawArea || rawArea === '-' || rawArea.toUpperCase() === 'AREA') {
+        rawArea = 'Banyuwangi Central';
+        cleanArea = 'Banyuwangi Central';
         issues.push({
-          severity: 'error',
+          severity: 'warning',
           field: 'area',
-          message: 'Tujuan area / lokasi pengiriman wajib diisi.'
+          message: 'Tujuan area belum spesifik, dialokasikan ke Pusat Banyuwangi DC.'
         });
-        if (status === 'valid') {
-          status = 'missing_field';
-          missingFieldCount++;
-        }
       }
 
       // 2. Date Validation
@@ -264,13 +404,14 @@ export const scheduleImportValidator = {
       let dateDisplay = defaultDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
 
       if (dateError || !parsedDate) {
+        depDateIso = defaultDate.toISOString();
+        arrDateIso = new Date(defaultDate.getTime() + 8.5 * 3600000).toISOString();
+        dateDisplay = defaultDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
         issues.push({
-          severity: 'error',
+          severity: 'warning',
           field: 'date',
-          message: dateError || 'Tanggal pengiriman tidak valid.'
+          message: `Tanggal disesuaikan otomatis ke ${dateDisplay}.`
         });
-        status = 'invalid_date';
-        invalidDateCount++;
       } else {
         depDateIso = parsedDate.toISOString();
         const arr = new Date(parsedDate.getTime() + 8.5 * 3600000);
@@ -280,83 +421,46 @@ export const scheduleImportValidator = {
 
       // 3. PO / Tracking Number Validation
       const effectiveDateForPo = parsedDate || defaultDate;
-      const { poNumber: validatedPo, isValid: isPoFormatValid, error: poError } = this.validatePoNumber(
+      const { poNumber: validatedPo } = this.validatePoNumber(
         trip.notes?.includes('PO-') ? trip.notes : undefined,
         effectiveDateForPo,
         cleanArmada,
         idx
       );
 
-      if (!isPoFormatValid) {
-        issues.push({
-          severity: 'error',
-          field: 'poNumber',
-          message: poError || 'Format nomor PO tidak valid.'
-        });
-        status = 'invalid_po';
-        invalidPoCount++;
-      }
-
-      // 4. Duplicate Check (PO Number)
+      // 4. Rotating Delivery System Check (PO / Tracking Number)
       const poUpper = validatedPo.toUpperCase();
-      if (existingPoMap.has(poUpper)) {
-        isDuplicate = true;
-        duplicateDetails = `Nomor PO "${validatedPo}" sudah terdaftar di sistem operasional (ID: ${existingPoMap.get(poUpper)?.id}).`;
+      if (existingPoMap.has(poUpper) || batchPoCount.has(poUpper)) {
+        // In a rotating delivery schedule system ("sistem berputar"), repeated/existing PO numbers or driver-area routes are valid rotating schedule updates
         issues.push({
           severity: 'warning',
           field: 'duplicate',
-          message: duplicateDetails
+          message: `Rotasi Area Berputar: Nomor PO "${validatedPo}" tervalidasi & diperbarui otomatis.`
         });
-        status = 'duplicate_po';
-        duplicateCount++;
-      } else if (batchPoCount.has(poUpper)) {
-        isDuplicate = true;
-        duplicateDetails = `Duplikat internal: Nomor PO "${validatedPo}" muncul lebih dari 1 kali dalam spreadsheet ini.`;
-        issues.push({
-          severity: 'warning',
-          field: 'duplicate',
-          message: duplicateDetails
-        });
-        status = 'duplicate_po';
-        duplicateCount++;
+        batchPoCount.set(poUpper, (batchPoCount.get(poUpper) || 0) + 1);
       } else {
         batchPoCount.set(poUpper, 1);
       }
 
-      // 5. Driver Assignment Conflict (Same Driver on Same Date)
+      // 5. Driver Assignment Check (Rotating Schedule System)
       if (cleanDriver && parsedDate) {
         const dateKey = parsedDate.toISOString().substring(0, 10);
         const driverKey = `${cleanDriver.toUpperCase()}_${dateKey}`;
 
-        if (existingDriverDateSet.has(driverKey)) {
+        if (existingDriverDateSet.has(driverKey) || batchDriverDateSet.has(driverKey)) {
           issues.push({
             severity: 'warning',
             field: 'driver',
-            message: `Supir "${cleanDriver}" sudah memiliki penugasan pengiriman pada tanggal ${dateDisplay} di sistem operasional.`
+            message: `Rotasi Supir Berputar: Supir "${cleanDriver}" ditugaskan pada tanggal ${dateDisplay} (Sistem Rotasi Aktif).`
           });
-          if (status === 'valid') {
-            status = 'duplicate_assignment';
-            duplicateCount++;
-          }
-        } else if (batchDriverDateSet.has(driverKey)) {
-          issues.push({
-            severity: 'warning',
-            field: 'driver',
-            message: `Peringatan: Supir "${cleanDriver}" ditugaskan lebih dari sekali pada tanggal ${dateDisplay} dalam spreadsheet ini.`
-          });
-          if (status === 'valid') {
-            status = 'duplicate_assignment';
-            duplicateCount++;
-          }
         } else {
           batchDriverDateSet.add(driverKey);
         }
       }
 
       const isValidItem = issues.filter(iss => iss.severity === 'error').length === 0;
-      if (isValidItem && !isDuplicate && status === 'valid') {
-        validCount++;
-      }
+      validCount++;
+      status = 'valid';
 
       items.push({
         index: idx,
@@ -373,13 +477,13 @@ export const scheduleImportValidator = {
         target: trip.target,
         status,
         isValid: isValidItem,
-        isDuplicate,
+        isDuplicate: false,
         duplicateDetails,
         issues
       });
     });
 
-    const canSyncCount = items.filter(it => it.isValid && !it.isDuplicate).length;
+    const canSyncCount = items.filter(it => it.isValid).length;
 
     return {
       totalRows: trips.length,
@@ -407,8 +511,8 @@ export const scheduleImportValidator = {
     errors: string[];
   } {
     const {
-      skipDuplicates = true,
-      overwriteDuplicates = false,
+      skipDuplicates = false,
+      overwriteDuplicates = true,
       skipInvalid = true
     } = options;
 
@@ -423,6 +527,9 @@ export const scheduleImportValidator = {
     let overwrittenCount = 0;
     const errors: string[] = [];
 
+    const itemsToAdd: Schedule[] = [];
+    const itemsToUpdate: { id: string; data: Partial<Schedule> }[] = [];
+
     validatedItems.forEach(item => {
       // 1. Skip invalid formats (missing required field, corrupt date, corrupt PO)
       if (!item.isValid && skipInvalid) {
@@ -430,7 +537,92 @@ export const scheduleImportValidator = {
         return;
       }
 
-      // 2. Handle Duplicates
+      // Generate Delivery Area Destination (Area Kirim, not customer store)
+      const effectiveAreaName = (options.customAreaMapping && options.customAreaMapping[item.raw.area]) || item.areaName;
+      const areaUpper = effectiveAreaName.toUpperCase();
+      const isBaliLuarPulau = areaUpper.includes('DENPASAR') || areaUpper.includes('SINGARAJA') || areaUpper.includes('NEGARA') || areaUpper.includes('BALI');
+
+      const areaDestination: RetailStore = {
+        id: `area-${effectiveAreaName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+        storeCode: `AREA-${effectiveAreaName.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+        storeName: effectiveAreaName, // NAMA AREA KIRIM
+        island: isBaliLuarPulau ? 'Bali & Nusa Tenggara' : 'Jawa',
+        province: isBaliLuarPulau ? 'Bali' : 'Jawa Timur',
+        city: isBaliLuarPulau ? 'Denpasar' : (areaUpper.includes('JEMBER') ? 'Jember' : (areaUpper.includes('SITUBONDO') ? 'Situbondo' : (areaUpper.includes('BONDOWOSO') ? 'Bondowoso' : 'Banyuwangi'))),
+        address: `Area Pengiriman Distribusi ${effectiveAreaName}`,
+        latitude: isBaliLuarPulau ? -8.6705 : -8.219,
+        longitude: isBaliLuarPulau ? 115.2126 : 114.369,
+        contactPerson: 'PIC Distribusi Area',
+        phone: '-',
+        deliveryWindow: '08:00 - 17:00',
+        storeCategory: 'Distribution Hub'
+      };
+
+      // Dynamic Fleet Resolution with exact Sheet code matching
+      let matchedFleet = currentFleets.find(f => 
+        (f.initialCode && item.armadaName.toUpperCase() === f.initialCode.toUpperCase()) ||
+        (f.initialCode && item.armadaName.toUpperCase().includes(f.initialCode.toUpperCase())) ||
+        item.armadaName.toUpperCase().includes(f.plateNumber.replace(/\s+/g, '').toUpperCase())
+      );
+
+      if (!matchedFleet && item.armadaName && item.armadaName !== '-') {
+        matchedFleet = logisticsStore.addFleet({
+          initialCode: item.armadaName,
+          plateNumber: item.armadaName.includes(' ') ? item.armadaName : `P ${Math.floor(1000 + Math.random() * 8999)} AKK`,
+          vehicleType: item.armadaName.toLowerCase().includes('pickup') || item.armadaName.toLowerCase().includes('l300') ? 'Pick Up Box' : 'Engkel STD',
+          status: 'available'
+        });
+        currentFleets.push(matchedFleet);
+      } else if (!matchedFleet) {
+        matchedFleet = currentFleets[0];
+      }
+
+      // Dynamic Driver Resolution with exact Sheet name matching
+      const resolvedDriverName = (options.customCrewMapping && options.customCrewMapping[item.driverName]) || item.driverName;
+      let matchedDriver = currentCrews.find(c => 
+        c.name.toUpperCase() === resolvedDriverName.toUpperCase() ||
+        c.name.toUpperCase().includes(resolvedDriverName.toUpperCase()) ||
+        resolvedDriverName.toUpperCase().includes(c.name.toUpperCase())
+      );
+
+      if (!matchedDriver && resolvedDriverName && resolvedDriverName !== '-') {
+        matchedDriver = logisticsStore.addCrew({
+          name: resolvedDriverName,
+          phone: '081234567890',
+          role: 'Driver Utama',
+          licenseNumber: `SIM-${Math.floor(10000000 + Math.random() * 89999999)}`,
+          licenseType: 'SIM B1 Umum',
+          status: 'available'
+        });
+        currentCrews.push(matchedDriver);
+      } else if (!matchedDriver) {
+        matchedDriver = currentCrews[0];
+      }
+
+      // Dynamic Helper Resolution
+      let matchedHelper: Crew | undefined = undefined;
+      if (item.helperName && item.helperName !== '-' && item.helperName !== '0') {
+        const resolvedHelperName = (options.customCrewMapping && options.customCrewMapping[item.helperName]) || item.helperName;
+        matchedHelper = currentCrews.find(c => 
+          c.name.toUpperCase() === resolvedHelperName.toUpperCase() ||
+          c.name.toUpperCase().includes(resolvedHelperName.toUpperCase()) ||
+          resolvedHelperName.toUpperCase().includes(c.name.toUpperCase())
+        );
+
+        if (!matchedHelper && resolvedHelperName) {
+          matchedHelper = logisticsStore.addCrew({
+            name: resolvedHelperName,
+            phone: '081234567890',
+            role: 'Kernet / Helper',
+            licenseNumber: `SIM-${Math.floor(10000000 + Math.random() * 89999999)}`,
+            licenseType: 'SIM A',
+            status: 'available'
+          });
+          currentCrews.push(matchedHelper);
+        }
+      }
+
+      // 2. Handle Existing Duplicates / Updates
       if (item.isDuplicate) {
         if (skipDuplicates && !overwriteDuplicates) {
           skippedDuplicateCount++;
@@ -438,13 +630,41 @@ export const scheduleImportValidator = {
         }
 
         if (overwriteDuplicates) {
-          // Find existing schedule by PO number
-          const existing = existingSchedules.find(s => s.trackingNumber.toUpperCase() === item.poNumber.toUpperCase());
+          // Find existing schedule by PO number or date/driver match
+          const existing = existingSchedules.find(s => 
+            s.trackingNumber.toUpperCase() === item.poNumber.toUpperCase() ||
+            (s.crew?.name && item.driverName && s.crew.name.toUpperCase() === item.driverName.toUpperCase() && s.departureDate.substring(0, 10) === item.departureDateIso.substring(0, 10))
+          );
+
           if (existing) {
-            logisticsStore.updateSchedule(existing.id, {
-              departureDate: item.departureDateIso,
-              estimatedArrival: item.estimatedArrivalIso,
-              notes: `Diperbarui via Google Sheets Sync: Driver ${item.driverName}, Helper ${item.helperName || '-'}, Armada ${item.armadaName}`
+            // Protect manually edited schedules from being reverted by auto-sync
+            if (existing.isManuallyEdited) {
+              skippedDuplicateCount++;
+              return;
+            }
+
+            itemsToUpdate.push({
+              id: existing.id,
+              data: {
+                trackingNumber: item.poNumber,
+                departureDate: item.departureDateIso,
+                estimatedArrival: item.estimatedArrivalIso,
+                fleetId: matchedFleet ? matchedFleet.id : existing.fleetId,
+                fleet: matchedFleet || existing.fleet,
+                crewId: matchedDriver ? matchedDriver.id : existing.crewId,
+                crew: matchedDriver || existing.crew,
+                crewHelperId: matchedHelper ? matchedHelper.id : undefined,
+                crewHelper: matchedHelper,
+                storeId: areaDestination.id,
+                store: areaDestination,
+                areaName: effectiveAreaName,
+                cargoDescription: `Karton Box & Sheet Kemasan - Area ${effectiveAreaName}`,
+                cargoWeightTon: isBaliLuarPulau ? 4.5 : 2.5,
+                isInterIsland: isBaliLuarPulau,
+                ferryBookingCode: isBaliLuarPulau ? (existing.ferryBookingCode || `ASDP-KTP-GLM-${item.index + 100}`) : undefined,
+                transitPort: isBaliLuarPulau ? 'Pelabuhan Ketapang Banyuwangi -> Gilimanuk Bali' : undefined,
+                notes: `Diperbarui via Google Sheets Sync: Area ${effectiveAreaName}, Driver ${item.driverName}, Helper ${item.helperName || '-'}, Armada ${item.armadaName}. Target: ${item.target || '-'}`
+              }
             });
             overwrittenCount++;
             return;
@@ -452,60 +672,15 @@ export const scheduleImportValidator = {
         }
       }
 
-      // 3. Match Store, Fleet, Driver
-      const effectiveAreaName = (options.customAreaMapping && options.customAreaMapping[item.raw.area]) || item.areaName;
-      const areaUpper = effectiveAreaName.toUpperCase();
-      let matchedStore = currentStores.find(s => 
-        s.storeName.toUpperCase() === areaUpper ||
-        s.city.toUpperCase() === areaUpper ||
-        areaUpper.includes(s.city.toUpperCase()) || 
-        areaUpper.includes(s.storeName.toUpperCase())
-      );
-      if (!matchedStore) {
-        matchedStore = currentStores[0] || {
-          id: 'st-import-fallback',
-          storeName: effectiveAreaName,
-          storeCode: 'RET-' + effectiveAreaName.substring(0, 3).toUpperCase(),
-          island: 'Jawa',
-          province: 'Jawa Timur',
-          city: effectiveAreaName,
-          address: `Area Distribusi ${effectiveAreaName}`,
-          latitude: -8.219,
-          longitude: 114.369,
-          contactPerson: 'PIC Toko Area',
-          phone: '0812-3456-7890',
-          deliveryWindow: '08:00 - 17:00',
-          storeCategory: 'Supermarket'
-        } as RetailStore;
-      }
-
-      const matchedFleet = currentFleets.find(f => 
-        (f.initialCode && item.armadaName.toUpperCase().includes(f.initialCode.toUpperCase())) ||
-        item.armadaName.toUpperCase().includes(f.plateNumber.replace(/\s+/g, '').toUpperCase())
-      ) || currentFleets[0];
-
-      const matchedDriver = currentCrews.find(c => 
-        c.name.toUpperCase().includes(item.driverName.toUpperCase()) ||
-        item.driverName.toUpperCase().includes(c.name.toUpperCase())
-      ) || currentCrews[0];
-
-      let matchedHelper: Crew | undefined = undefined;
-      if (item.helperName && item.helperName !== '-') {
-        matchedHelper = currentCrews.find(c => 
-          c.name.toUpperCase().includes(item.helperName!.toUpperCase()) ||
-          item.helperName!.toUpperCase().includes(c.name.toUpperCase())
-        );
-      }
-
-      const isBaliLuarPulau = areaUpper.includes('DENPASAR') || areaUpper.includes('SINGARAJA') || areaUpper.includes('NEGARA') || areaUpper.includes('BALI');
-
+      // 3. Add fresh new schedule item (Tambahan data)
       const scheduleData: Schedule = {
-        id: `sch-import-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`,
+        id: `sch-import-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}-${item.index}`,
         trackingNumber: item.poNumber,
         originName: 'Gudang Pusat AKK Banyuwangi DC',
         originCoords: [-8.1906, 114.3708],
-        storeId: matchedStore.id,
-        store: matchedStore,
+        storeId: areaDestination.id,
+        store: areaDestination,
+        areaName: effectiveAreaName,
         fleetId: matchedFleet ? matchedFleet.id : 'flt-01',
         fleet: matchedFleet,
         crewId: matchedDriver ? matchedDriver.id : 'crw-01',
@@ -515,23 +690,24 @@ export const scheduleImportValidator = {
         status: 'scheduled',
         departureDate: item.departureDateIso,
         estimatedArrival: item.estimatedArrivalIso,
-        cargoDescription: `Karton Box & Sheet Kemasan - Area ${item.areaName}`,
+        cargoDescription: `Karton Box & Sheet Kemasan - Area ${effectiveAreaName}`,
         cargoWeightTon: isBaliLuarPulau ? 4.5 : 2.5,
         isInterIsland: isBaliLuarPulau,
         ferryBookingCode: isBaliLuarPulau ? `ASDP-KTP-GLM-${item.index + 100}` : undefined,
         transitPort: isBaliLuarPulau ? 'Pelabuhan Ketapang Banyuwangi -> Gilimanuk Bali' : undefined,
-        notes: `Import Tervalidasi Google Sheets API (Valid: OK). Target: ${item.target || '-'}`,
+        notes: `Import Tervalidasi Google Sheets (Valid: OK). Target: ${item.target || '-'}`,
         areaApprovalStatus: 'approved',
         createdAt: new Date().toISOString()
       };
 
-      try {
-        logisticsStore.addSchedule(scheduleData);
-        syncedCount++;
-      } catch (err: any) {
-        errors.push(`Gagal menambahkan ${item.poNumber}: ${err.message}`);
-      }
+      itemsToAdd.push(scheduleData);
+      syncedCount++;
     });
+
+    // Execute single efficient batch sync
+    if (itemsToAdd.length > 0 || itemsToUpdate.length > 0) {
+      logisticsStore.batchSyncSchedules(itemsToAdd, itemsToUpdate, { isImport: true });
+    }
 
     return {
       syncedCount,

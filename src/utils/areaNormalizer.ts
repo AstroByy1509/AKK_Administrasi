@@ -19,7 +19,9 @@ export const STANDARD_AREAS = [
   'GALEKAN',
   'JEMBER BARAT',
   'RITEL KALIBARU',
-  'RITEL PURWO',
+  'PURWO DAMBUNTUNG',
+  'PURWO PASAR',
+  'SUMBERAYU RETAIL',
   'SSLN SINGARAJA',
   'SEMPU KALISTAIL',
   'JEMBER KOTA',
@@ -47,7 +49,9 @@ export const AREA_CODE_MAP: Record<string, StandardAreaName> = {
   'GALEKAN': 'GALEKAN',
   'JEMBER_BARAT': 'JEMBER BARAT',
   'RITEL_KALIBARU': 'RITEL KALIBARU',
-  'RITEL_PURWO': 'RITEL PURWO',
+  'PURWO_DAMBUNTUNG': 'PURWO DAMBUNTUNG',
+  'PURWO_PASAR': 'PURWO PASAR',
+  'SUMBERAYU_RETAIL': 'SUMBERAYU RETAIL',
   'SSLN_SINGARAJA': 'SSLN SINGARAJA',
   'SEMPU_KALISTAIL': 'SEMPU KALISTAIL',
   'JEMBER_KOTA': 'JEMBER KOTA',
@@ -99,32 +103,48 @@ export function standardizeAreaName(rawArea: string | undefined | null): string 
     return 'SUSULAN ROGOJAMPI-MUNCAR';
   }
 
-  // 4. Purwo Dambuntung / Purwo Pasar / Purwo -> RITEL PURWO
-  if (clean.includes('PURWO')) {
-    return 'RITEL PURWO';
+  // 4. Sumberayu Retail
+  if (
+    clean.includes('SUMBERAYU') || 
+    clean.includes('SUMBER AYU') || 
+    clean.includes('SUMBERAYUY')
+  ) {
+    return 'SUMBERAYU RETAIL';
   }
 
-  // 5. Singaraja -> SSLN SINGARAJA
+  // 5. Purwo Dambuntung / Purwo Pasar / Purwo
+  if (clean.includes('DAMBUNTUNG')) {
+    return 'PURWO DAMBUNTUNG';
+  }
+  if (clean.includes('PASAR') && clean.includes('PURWO')) {
+    return 'PURWO PASAR';
+  }
+  if (clean.includes('PURWO') || clean.includes('PURWOHARJO')) {
+    if (clean.includes('DAM') || clean.includes('BUNTUNG')) return 'PURWO DAMBUNTUNG';
+    return 'PURWO PASAR';
+  }
+
+  // 6. Singaraja -> SSLN SINGARAJA
   if (clean.includes('SINGARAJA')) {
     return 'SSLN SINGARAJA';
   }
 
-  // 6. Kalibaru -> RITEL KALIBARU
+  // 7. Kalibaru -> RITEL KALIBARU
   if (clean.includes('KALIBARU')) {
     return 'RITEL KALIBARU';
   }
 
-  // 7. Songgon -> RITEL SONGGON
+  // 8. Songgon -> RITEL SONGGON
   if (clean.includes('SONGGON')) {
     return 'RITEL SONGGON';
   }
 
-  // 8. Srono -> RITEL SRONO
+  // 9. Srono -> RITEL SRONO
   if (clean.includes('SRONO')) {
     return 'RITEL SRONO';
   }
 
-  // 9. Sanggar -> RITEL SANGGAR / SUSULAN SANGGAR-JAJAG
+  // 10. Sanggar -> RITEL SANGGAR / SUSULAN SANGGAR-JAJAG
   if (clean.includes('SUSULAN SANGGAR') || clean.includes('SANGGAR-JAJAG')) {
     return 'SUSULAN SANGGAR-JAJAG';
   }
@@ -132,22 +152,22 @@ export function standardizeAreaName(rawArea: string | undefined | null): string 
     return 'RITEL SANGGAR';
   }
 
-  // 10. Rogojampi Ritel -> RITEL ROGOJAMPI
+  // 11. Rogojampi Ritel -> RITEL ROGOJAMPI
   if (clean.includes('ROGOJAMPI')) {
     return 'RITEL ROGOJAMPI';
   }
 
-  // 11. Ketapang / Wongsorejo -> KETAPANG - WONGSOREJO
+  // 12. Ketapang / Wongsorejo -> KETAPANG - WONGSOREJO
   if (clean.includes('KETAPANG') || clean.includes('WONGSOREJO')) {
     return 'KETAPANG - WONGSOREJO';
   }
 
-  // 12. Sempu / Kalistail / Xstail -> SEMPU KALISTAIL
+  // 13. Sempu / Kalistail / Xstail -> SEMPU KALISTAIL
   if (clean.includes('SEMPU') || clean.includes('KALISTAIL') || clean.includes('XSTAIL')) {
     return 'SEMPU KALISTAIL';
   }
 
-  // 13. Jember Kota / Barat / Selatan
+  // 14. Jember Kota / Barat / Selatan
   if (clean.includes('JEMBER BARAT') || clean.includes('JEMBER PINGGIR') || clean.includes('JEMBER (MALAM)')) {
     return 'JEMBER BARAT';
   }
@@ -158,7 +178,7 @@ export function standardizeAreaName(rawArea: string | undefined | null): string 
     return 'JEMBER KOTA';
   }
 
-  // 14. Grosir -> GROSIR 1
+  // 15. Grosir -> GROSIR 1
   if (clean.includes('GROSIR')) {
     return 'GROSIR 1';
   }
