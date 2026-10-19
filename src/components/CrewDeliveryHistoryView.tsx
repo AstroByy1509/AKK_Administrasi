@@ -400,7 +400,7 @@ export const CrewDeliveryHistoryView: React.FC = () => {
             >
               <option value={-1}>Semua Bulan</option>
               {Array.from({ length: 12 }).map((_, i) => (
-                <option key={i} value={i}>{new Date(0, i).toLocaleString('id-ID', { month: 'long' })}</option>
+                <option key={'month-' + i} value={i}>{new Date(0, i).toLocaleString('id-ID', { month: 'long' })}</option>
               ))}
             </select>
 
@@ -410,7 +410,7 @@ export const CrewDeliveryHistoryView: React.FC = () => {
               className="px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-slate-200"
             >
               {Array.from({ length: 5 }).map((_, i) => (
-                <option key={i} value={2024 + i}>{2024 + i}</option>
+                <option key={'year-' + i} value={2024 + i}>{2024 + i}</option>
               ))}
             </select>
 

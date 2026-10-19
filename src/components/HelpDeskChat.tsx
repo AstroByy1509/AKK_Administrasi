@@ -672,7 +672,7 @@ ${data.reply || 'Diskusi berjalan lancar terkait operasional harian.'}
           {/* Chat Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-900">
             {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={'chat-' + i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`inline-block p-3 rounded-xl text-xs sm:text-sm max-w-[88%] leading-relaxed ${
                   msg.isSummary 
                     ? 'bg-emerald-950 text-emerald-100 border border-emerald-500 shadow-md font-sans'

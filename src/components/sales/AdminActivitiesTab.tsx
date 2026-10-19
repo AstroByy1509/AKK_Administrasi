@@ -298,7 +298,7 @@ export const AdminActivitiesTab: React.FC<AdminActivitiesTabProps & { adminOptio
                       const percent = checklistRows.length > 0 ? Math.round((dayChecks / checklistRows.length) * 100) : 0;
                       const colorClass = percent < 30 ? 'text-emerald-600' : percent <= 60 ? 'text-amber-600' : 'text-rose-600';
                       return (
-                        <td key={i} className={`py-1 text-center font-bold text-[10px] border-r border-slate-100 ${colorClass}`}>
+                        <td key={'activity-day-' + i} className={`py-1 text-center font-bold text-[10px] border-r border-slate-100 ${colorClass}`}>
                           {percent}%
                         </td>
                       );
