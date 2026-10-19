@@ -182,7 +182,7 @@ export const PurchasingStockAnalysis: React.FC<{ tab: 'overview' | 'forecast' }>
                   onChange={(e) => setCategoryFilter(e.target.value)}
                   className="bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none"
                 >
-                  {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  {categories.map((cat, index) => <option key={`cat-${index}`} value={cat}>{cat}</option>)}
                 </select>
               </div>
             </div>

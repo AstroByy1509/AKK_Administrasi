@@ -243,7 +243,7 @@ export const AndroidApkDownloadModal: React.FC<AndroidApkDownloadModalProps> = (
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                   {currentInfo.features.map((feat, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-[11px] text-slate-300">
+                    <div key={feat + idx} className="flex items-center gap-2 text-[11px] text-slate-300">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
                       <span>{feat}</span>
                     </div>

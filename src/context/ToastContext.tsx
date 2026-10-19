@@ -180,7 +180,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     urgent?: boolean
   ) => {
     const newNotif: ToastNotification = {
-      id: 'notif-' + Math.random().toString(36).substring(2, 9),
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       type,
       title,
       message,

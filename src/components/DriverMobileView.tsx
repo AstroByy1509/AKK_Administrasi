@@ -2791,9 +2791,9 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
                 'Cuaca Buruk / Hujan Deras',
                 'Jadwal Kapal ASDP Terlambat (Bali)',
                 'Toko Belum Buka / Tutup Sementara'
-              ].map((r) => (
+              ].map((r, index) => (
                 <label
-                  key={r}
+                  key={`delay-${index}`}
                   onClick={() => setDelayModal(prev => ({ ...prev, reason: r }))}
                   className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs cursor-pointer transition ${delayModal.reason === r ? 'bg-rose-500/15 border-rose-500/50 text-rose-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'}`}
                 >

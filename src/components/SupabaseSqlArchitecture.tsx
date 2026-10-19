@@ -767,7 +767,7 @@ create policy "Tracking logs accessible by authenticated users"
 
                       return (
                         <tr 
-                          key={item.id} 
+                          key={item.id + index} 
                           className={`hover:bg-slate-900/50 transition ${
                             isMissing 
                               ? 'bg-red-950/20' 

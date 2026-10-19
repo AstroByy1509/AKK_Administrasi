@@ -2029,7 +2029,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {item.keyClients.map((client, idx) => (
-                          <span key={idx} className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] border border-slate-700/60">
+                          <span key={client + idx} className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] border border-slate-700/60">
                             {client}
                           </span>
                         ))}

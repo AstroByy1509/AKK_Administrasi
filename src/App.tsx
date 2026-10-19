@@ -117,15 +117,26 @@ export default function App() {
     return logisticsStore.subscribe(() => {
       const user = logisticsStore.getCurrentUser();
       setCurrentUser(user);
-      if (user.role === 'driver' && currentTab === 'dashboard') {
-        setCurrentTab('driver_portal');
+      if (currentTab === 'users' || !canAccess(user, currentTab)) {
+        if (user.role === 'driver' || user.role === 'crew_helper') {
+          setCurrentTab('driver_portal');
+        } else if (user.role === 'super_admin') {
+          setCurrentTab('dashboard');
+        } else {
+          setCurrentTab('operational_dashboard');
+        }
       }
     });
   }, [currentTab]);
 
   useEffect(() => {
-    if (currentUser.role === 'driver' && currentTab === 'dashboard') {
-      setCurrentTab('driver_portal');
+    const user = logisticsStore.getCurrentUser();
+    if (currentTab === 'users' || !canAccess(user, currentTab)) {
+      if (user.role === 'driver' || user.role === 'crew_helper') {
+        setCurrentTab('driver_portal');
+      } else if (user.role !== 'super_admin') {
+        setCurrentTab('operational_dashboard');
+      }
     }
   }, []);
 

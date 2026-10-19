@@ -166,8 +166,8 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({ isOpen, onCl
           
           {/* Signature Area */}
           <div className="grid grid-cols-3 gap-4 border rounded-xl mt-4 text-xs">
-            {['Yang Menerima', 'Menyetujui', 'Yang Mengajukan'].map((role) => (
-              <div key={role} className="p-4 text-center">
+            {['Yang Menerima', 'Menyetujui', 'Yang Mengajukan'].map((role, index) => (
+              <div key={`role-${index}`} className="p-4 text-center">
                 <p className="font-medium text-slate-700">{role},</p>
                 <div className="h-16 border-b mt-8 mb-2 border-slate-300"></div>
                 <p className="text-slate-500">(___________)</p>
