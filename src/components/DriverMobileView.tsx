@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AkkLogo } from './AkkLogo';
 import {
   Truck,
   MapPin,
@@ -51,7 +52,11 @@ import {
   Smartphone,
   Trash2,
   ArrowRightLeft,
-  UserX
+  UserX,
+  LogIn,
+  UserPlus,
+  Mail,
+  EyeOff
 } from 'lucide-react';
 import {
   Schedule,
@@ -62,7 +67,8 @@ import {
   DriverVehicleChecklist,
   OutboundWaybill,
   ChecklistItemCategory,
-  DriverShiftCheckin
+  DriverShiftCheckin,
+  UserRole
 } from '../types';
 import { logisticsStore } from '../services/store';
 import { driverReportService, DriverHelperReport } from '../services/driverReportService';
@@ -116,11 +122,23 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
     return null;
   });
 
-  const [loginDriverSelectId, setLoginDriverSelectId] = useState<string>(() => {
-    const defaultDriver = logisticsStore.getCrews().find(c => c.role.includes('Driver')) || logisticsStore.getCrews()[0];
-    return defaultDriver ? defaultDriver.id : '';
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // Register Form
+  const [registerData, setRegisterData] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    role: 'driver' as UserRole,
+    department: 'Gudang Distribusi Packaging Banyuwangi',
+    password: '',
+    confirmPassword: ''
   });
-  const [loginPin, setLoginPin] = useState<string>('');
 
   const [selectedDriverId, setSelectedDriverId] = useState<string>(() => {
     if (loggedInDriver) return loggedInDriver.id;
@@ -131,18 +149,60 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
 
   const handleDriverLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const foundCrew = crews.find(c => c.id === loginDriverSelectId);
-    if (!foundCrew) {
-      addNotification('delivery', 'Login Gagal', 'Silakan pilih akun driver yang valid dari daftar.');
+    setErrorMsg('');
+    const user = logisticsStore.loginUser(loginEmail, loginPassword);
+    if (!user) {
+      const foundCrew = crews.find(c => c.name.toLowerCase().includes(loginEmail.toLowerCase()) || c.phone.includes(loginEmail));
+      if (foundCrew) {
+        setLoggedInDriver(foundCrew);
+        setSelectedDriverId(foundCrew.id);
+        setIsDriverLoggedIn(true);
+        try {
+          localStorage.setItem('akk_driver_auth_session', JSON.stringify(foundCrew));
+        } catch {}
+        setSuccessMsg(`Berhasil masuk sebagai ${foundCrew.name}`);
+        setTimeout(() => {
+          addNotification('delivery', 'Login Berhasil', `Selamat datang di Portal Driver Mobile, ${foundCrew.name}!`);
+        }, 300);
+        return;
+      }
+      setErrorMsg('Username/Email atau Password salah. Silakan periksa kembali.');
       return;
     }
-    setLoggedInDriver(foundCrew);
-    setSelectedDriverId(foundCrew.id);
+
+    const crewMatch = crews.find(c => c.name.toLowerCase() === user.fullName.toLowerCase()) || crews[0];
+    setLoggedInDriver(crewMatch);
+    setSelectedDriverId(crewMatch ? crewMatch.id : (crews[0]?.id || ''));
     setIsDriverLoggedIn(true);
     try {
-      localStorage.setItem('akk_driver_auth_session', JSON.stringify(foundCrew));
+      localStorage.setItem('akk_driver_auth_session', JSON.stringify(crewMatch || crews[0]));
     } catch {}
-    addNotification('delivery', 'Login Berhasil', `Selamat datang di Portal Driver Mobile, ${foundCrew.name}!`);
+    setSuccessMsg(`Berhasil masuk sebagai ${user.fullName}`);
+    setTimeout(() => {
+      addNotification('delivery', 'Login Berhasil', `Selamat datang di Portal AKK, ${user.fullName}!`);
+    }, 300);
+  };
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    if (registerData.password && registerData.password !== registerData.confirmPassword) {
+      setErrorMsg('Konfirmasi password tidak cocok.');
+      return;
+    }
+    const newUser = logisticsStore.registerUser({
+      fullName: registerData.fullName,
+      email: registerData.email,
+      phone: registerData.phone,
+      role: registerData.role,
+      department: registerData.department,
+      notes: 'Pendaftaran mandiri melalui portal AKK - Menunggu verifikasi'
+    });
+    setSuccessMsg(`Pendaftaran berhasil! Akun "${newUser.fullName}" terdaftar dan menunggu persetujuan Super Admin.`);
+    setTimeout(() => {
+      setAuthTab('login');
+      setSuccessMsg('Pendaftaran berhasil! Silakan masuk setelah akun disetujui.');
+    }, 1200);
   };
 
   const handleDriverLogout = () => {
@@ -834,56 +894,176 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
   if (!isDriverLoggedIn) {
     return (
       <div className="w-full max-w-md mx-auto bg-slate-950 min-h-screen text-slate-100 flex flex-col justify-center p-6 shadow-2xl relative border-x border-slate-900">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto font-bold shadow-lg">
-              <Truck className="w-8 h-8" />
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full overflow-hidden shadow-2xl relative">
+          {/* Modal Brand Header */}
+          <div className="p-6 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900 border-b border-slate-800 text-center">
+            <div className="flex justify-center mb-3">
+              <AkkLogo size="lg" />
             </div>
-            <h1 className="text-lg font-black text-white">Portal Driver &amp; Helper AKK</h1>
-            <p className="text-xs text-slate-400">
-              Masuk menggunakan akun driver/helper yang telah didaftarkan pada web PT Anugrah Kemasan Kreatif. Tidak memerlukan login email Google.
+            <p className="text-slate-400 text-xs mt-2 max-w-md mx-auto">
+              Portal Akses Logistik Terintegrasi & Pengiriman Luar Pulau PT Anugrah Kemasan Kreatif.
             </p>
+
+            {/* Tab Switcher */}
+            <div className="flex items-center justify-center gap-2 mt-5 bg-slate-950 p-1 rounded-xl border border-slate-800 max-w-xs mx-auto">
+              <button
+                onClick={() => { setAuthTab('login'); setErrorMsg(''); }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition ${
+                  authTab === 'login'
+                    ? 'bg-amber-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Masuk (Login)</span>
+              </button>
+              <button
+                onClick={() => { setAuthTab('register'); setErrorMsg(''); }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition ${
+                  authTab === 'register'
+                    ? 'bg-amber-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Daftar Akun</span>
+              </button>
+            </div>
           </div>
 
-          <form onSubmit={handleDriverLoginSubmit} className="space-y-4 text-xs">
-            <div>
-              <label className="text-slate-300 font-semibold block mb-1">Pilih Nama Driver / Kru Terdaftar</label>
-              <select
-                value={loginDriverSelectId}
-                onChange={(e) => setLoginDriverSelectId(e.target.value)}
-                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-white font-medium focus:outline-none focus:border-amber-500"
-              >
-                {crews.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+          {/* Notifications */}
+          {errorMsg && (
+            <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{errorMsg}</span>
             </div>
+          )}
 
-            <div>
-              <label className="text-slate-300 font-semibold block mb-1">PIN Keamanan / Sandi Driver</label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+          {successMsg && (
+            <div className="mx-6 mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {authTab === 'login' ? (
+            <form onSubmit={handleDriverLoginSubmit} className="p-6 space-y-4 text-xs">
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Email / Username</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="admin atau nama@gmail.com"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Password</label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3.5 top-3 text-slate-400 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer flex items-center justify-center gap-2 mt-2"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Masuk ke Portal AKK</span>
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister} className="p-6 space-y-3 text-xs">
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Nama Lengkap</label>
                 <input
-                  type="password"
-                  placeholder="Masukkan PIN (Default: 1234)"
-                  value={loginPin}
-                  onChange={(e) => setLoginPin(e.target.value)}
-                  className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                  type="text"
+                  required
+                  placeholder="Nama Lengkap Anda"
+                  value={registerData.fullName}
+                  onChange={(e) => setRegisterData({ ...registerData, fullName: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
               </div>
-              <span className="text-[10px] text-slate-400 mt-1 block">PIN default untuk semua kru terdaftar adalah 1234 (atau sesuai pengaturan admin web).</span>
-            </div>
 
-            <button
-              type="submit"
-              className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer flex items-center justify-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Masuk ke Aplikasi Driver</span>
-            </button>
-          </form>
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Email / Username</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="email@domain.com"
+                  value={registerData.email}
+                  onChange={(e) => setRegisterData({ ...registerData, email: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Nomor WhatsApp</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="08123456789"
+                  value={registerData.phone}
+                  onChange={(e) => setRegisterData({ ...registerData, phone: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={registerData.password}
+                  onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Konfirmasi Password</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={registerData.confirmPassword}
+                  onChange={(e) => setRegisterData({ ...registerData, confirmPassword: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer flex items-center justify-center gap-2 mt-2"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Kirim Pendaftaran Akun</span>
+              </button>
+            </form>
+          )}
         </div>
       </div>
     );
