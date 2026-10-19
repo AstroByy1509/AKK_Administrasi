@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "prebuild": "tsx scripts/validate_env.ts",
     "dev": "tsx server.ts",
     "build": "vite build",
     "build:portal": "BUILD_TARGET=portal vite build",
