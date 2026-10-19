@@ -374,7 +374,7 @@ export const FleetTaxMonitoringPanel: React.FC<FleetTaxMonitoringPanelProps> = (
                     <td className="py-3 px-4 font-sans">
                       <div className="font-bold text-white flex items-center gap-1.5">
                         <Truck className="w-3.5 h-3.5 text-blue-400" />
-                        <span>{item.plateNumber}</span>
+                        <span>{item.plateNumber} {item.initialCode ? `(${item.initialCode})` : ''}</span>
                       </div>
                       <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                         {item.initialCode && <span className="text-amber-400 font-bold">{item.initialCode}</span>}

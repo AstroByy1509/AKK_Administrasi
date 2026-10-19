@@ -35,6 +35,8 @@ import {
 import { TracksolidDevice, Fleet, Schedule, RetailStore } from '../types';
 import { logisticsStore } from '../services/store';
 import { CENTRAL_WAREHOUSE } from '../data/mockData';
+import { tracksolidSyncService, TracksolidSyncState } from '../services/tracksolidSyncService';
+import { useToast } from '../context/ToastContext';
 
 interface FleetLiveMapProps {
   heightClass?: string;
@@ -224,6 +226,59 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
 
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
 
+  // 📡 Tracksolid Pro 5-Minute Auto-Sync Engine Integration
+  const { addNotification } = useToast();
+  const [syncState, setSyncState] = useState<TracksolidSyncState>(tracksolidSyncService.getState());
+  const [syncNotificationBanner, setSyncNotificationBanner] = useState<string | null>(null);
+  const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? navigator.onLine : true;
+  });
+
+  // Network listener for offline/online transitions
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Subscribe to Tracksolid 5-Minute Auto-Sync Service
+  useEffect(() => {
+    const unsubSync = tracksolidSyncService.subscribe((state) => {
+      setSyncState(state);
+      if (state.lastSyncTime) {
+        setLastSyncTime(state.lastSyncTime);
+      }
+    });
+
+    const handleSyncEvent = (e: any) => {
+      const detail = e.detail;
+      if (detail) {
+        const msg = `Pembaruan Otomatis Tracksolid: ${detail.count} armada diperbarui (${detail.time} WIB)`;
+        setSyncNotificationBanner(msg);
+        addNotification(
+          'geofence',
+          'Sinkronisasi Otomatis Tracksolid (Tiap 5 Menit)',
+          `Posisi GPS ${detail.count} armada telah diperbarui akurat pada peta.`,
+          false
+        );
+        setTimeout(() => setSyncNotificationBanner(null), 5000);
+      }
+    };
+
+    window.addEventListener('tracksolid-synced', handleSyncEvent);
+
+    return () => {
+      unsubSync();
+      window.removeEventListener('tracksolid-synced', handleSyncEvent);
+    };
+  }, [addNotification]);
+
   // Listen for changes in logisticsStore
   useEffect(() => {
     const unsubscribe = logisticsStore.subscribe(() => {
@@ -352,37 +407,29 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
     }
   }, [selectedImeiFromParent, devices]);
 
-  // Live GPS simulation pulse
-  useEffect(() => {
-    if (!isSimulatingLive) return;
+  // Manual trigger synchronization helper
+  const handleTriggerManualSync = async () => {
+    setIsManualSyncing(true);
+    try {
+      const res = await tracksolidSyncService.triggerSync('manual');
+      if (res.success) {
+        setSyncNotificationBanner(`Sinkronisasi manual berhasil: ${res.devices.length} armada diperbarui`);
+        setTimeout(() => setSyncNotificationBanner(null), 4000);
+      }
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
 
-    const interval = setInterval(() => {
-      setDevices(prevDevices => {
-        return prevDevices.map(dev => {
-          if (dev.status === 'Online' || dev.currentSpeedKmh > 0) {
-            const latDelta = (Math.random() - 0.48) * 0.0008;
-            const lngDelta = (Math.random() - 0.48) * 0.0008;
-            const newLat = Number((dev.latitude + latDelta).toFixed(6));
-            const newLng = Number((dev.longitude + lngDelta).toFixed(6));
-            const speedFluctuation = Math.max(15, Math.min(85, dev.currentSpeedKmh + Math.floor(Math.random() * 5) - 2));
-
-            return {
-              ...dev,
-              latitude: newLat,
-              longitude: newLng,
-              currentSpeedKmh: speedFluctuation,
-              lastFix: new Date().toLocaleTimeString(),
-              lastUpdate: new Date().toISOString().replace('T', ' ').substring(0, 19)
-            };
-          }
-          return dev;
-        });
-      });
-      setLastSyncTime(new Date().toLocaleTimeString());
-    }, 4000);
-
-    return () => clearInterval(interval);
-  }, [isSimulatingLive]);
+  // Interval change helper
+  const handleIntervalSelect = (seconds: number) => {
+    if (seconds <= 0) {
+      tracksolidSyncService.setAutoSyncEnabled(false);
+    } else {
+      tracksolidSyncService.setAutoSyncEnabled(true);
+      tracksolidSyncService.setIntervalSeconds(seconds);
+    }
+  };
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -812,7 +859,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
               </span>
             </h3>
             <p className="text-xs text-slate-400">
-              Pemantauan koordinat GPS, status kontak ACC, kecepatan, dan notifikasi toast alarm idle &gt;60m di luar gudang pusat
+              Sinkronisasi data otomatis dengan API Tracksolid setiap 5 menit • Lokasi armada di peta selalu akurat tanpa refresh manual
             </p>
           </div>
         </div>
@@ -831,27 +878,6 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           >
             <Flame size={14} className={showIdleHeatmap ? 'text-rose-400' : 'text-slate-500'} />
             <span>Heatmap Idle (24 Jam): {showIdleHeatmap ? 'ON' : 'OFF'}</span>
-          </button>
-
-          {/* Live GPS Sync Badge */}
-          <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 font-mono text-[11px]">
-            <span className={`w-2 h-2 rounded-full ${isSimulatingLive ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-            <span className="text-slate-300 font-bold">{isSimulatingLive ? 'LIVE' : 'PAUSED'}</span>
-            <span className="text-slate-500 text-[10px]">({lastSyncTime})</span>
-          </div>
-
-          {/* Toggle Live Ping Simulation */}
-          <button
-            onClick={() => setIsSimulatingLive(!isSimulatingLive)}
-            className={`px-2.5 py-1 rounded-lg border transition font-semibold flex items-center gap-1 cursor-pointer ${
-              isSimulatingLive 
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
-                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-            }`}
-            title="Sematkan / Jeda simulasi ping GPS real-time"
-          >
-            <RefreshCw size={12} className={isSimulatingLive ? 'animate-spin' : ''} />
-            <span>{isSimulatingLive ? 'Telemetry Active' : 'Resume Live'}</span>
           </button>
 
           {/* Map Layer Selector */}
@@ -885,7 +911,7 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           {/* Center All Fleets */}
           <button
             onClick={fitAllFleets}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer font-semibold"
             title="Pusatkan peta ke seluruh koordinat armada"
           >
             <Compass size={13} className="text-amber-400" />
@@ -895,13 +921,122 @@ export const FleetLiveMap: React.FC<FleetLiveMapProps> = ({
           {/* Fullscreen Toggle */}
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
             title={isFullscreen ? 'Kecilkan Peta' : 'Layar Penuh'}
           >
-            {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         </div>
       </div>
+
+      {/* 📡 DEDICATED TRACKSOLID 5-MINUTE AUTO-SYNC STATUS & CONTROL BAR */}
+      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-slate-800/90 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-inner">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Active Radar Status Pill */}
+          <div className="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-xs">
+            <div className="relative flex items-center justify-center">
+              <span className={`w-3 h-3 rounded-full ${
+                !isOnline
+                  ? 'bg-amber-400 opacity-60'
+                  : syncState.isAutoSyncEnabled
+                  ? 'bg-emerald-400 animate-ping opacity-75'
+                  : 'bg-slate-500'
+              }`} />
+              <span className={`w-2 h-2 rounded-full absolute ${
+                !isOnline
+                  ? 'bg-amber-400'
+                  : syncState.isAutoSyncEnabled
+                  ? 'bg-emerald-500'
+                  : 'bg-slate-400'
+              }`} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-white text-xs">Auto-Sync Tracksolid API:</span>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-extrabold uppercase border ${
+                !isOnline
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-xs shadow-amber-500/20'
+                  : syncState.isAutoSyncEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs shadow-emerald-500/20'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}>
+                {!isOnline ? 'Dijeda (Offline)' : syncState.isAutoSyncEnabled ? 'Aktif (Tiap 5 Menit)' : 'Dijeda'}
+              </span>
+            </div>
+          </div>
+
+          {/* Countdown Clock to Next Automatic Sync or Offline Warning */}
+          {!isOnline ? (
+            <div className="flex items-center gap-2 bg-amber-950/40 px-3 py-1.5 rounded-xl border border-amber-500/30 text-amber-300 font-mono shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span className="text-[11px] text-amber-200 font-sans font-semibold">Pelacakan Real-Time Dijeda (Menunggu Internet)</span>
+            </div>
+          ) : syncState.isAutoSyncEnabled ? (
+            <div className="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-cyan-500/30 text-slate-300 font-mono shadow-xs">
+              <Clock size={13} className="text-cyan-400 animate-pulse" />
+              <span className="text-[11px] text-slate-400 font-sans">Sinkronisasi otomatis dalam:</span>
+              <span className="text-cyan-300 font-bold text-xs bg-slate-950 px-2 py-0.5 rounded border border-cyan-500/40 tracking-wider">
+                {tracksolidSyncService.formatCountdown(syncState.countdownSeconds)}
+              </span>
+            </div>
+          ) : null}
+
+          {/* Last Sync Info & Monitored Fleets */}
+          <div className="hidden lg:flex items-center gap-2 text-slate-400 text-[11px]">
+            <span>Terakhir disinkronkan:</span>
+            <span className="text-slate-200 font-mono font-bold">{syncState.lastSyncTime || lastSyncTime} WIB</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-emerald-400 font-semibold">{devices.length} Armada Akurat</span>
+            <span className="text-slate-500 text-[10px]">(Tanpa Refresh Halaman)</span>
+          </div>
+        </div>
+
+        {/* Right Actions: Interval Selector & Manual Sync Now Button */}
+        <div className="flex items-center gap-2">
+          {/* Interval Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-xl border border-slate-700 text-xs">
+            <span className="text-slate-400 text-[11px] font-medium">Interval:</span>
+            <select
+              value={syncState.isAutoSyncEnabled ? syncState.intervalSeconds : 0}
+              onChange={(e) => handleIntervalSelect(parseInt(e.target.value, 10))}
+              className="bg-transparent text-emerald-400 font-bold text-xs border-none outline-none cursor-pointer pr-1"
+            >
+              <option value={300} className="bg-slate-900 text-slate-100 font-medium">Setiap 5 Menit (Standar Tracksolid)</option>
+              <option value={60} className="bg-slate-900 text-slate-100 font-medium">Setiap 1 Menit (Cepat)</option>
+              <option value={180} className="bg-slate-900 text-slate-100 font-medium">Setiap 3 Menit</option>
+              <option value={600} className="bg-slate-900 text-slate-100 font-medium">Setiap 10 Menit</option>
+              <option value={0} className="bg-slate-900 text-slate-100 font-medium">Jeda Auto-Sync</option>
+            </select>
+          </div>
+
+          {/* "Sinkronkan Sekarang" Button */}
+          <button
+            onClick={handleTriggerManualSync}
+            disabled={syncState.isSyncing || isManualSyncing}
+            className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 text-xs ${
+              syncState.isSyncing || isManualSyncing
+                ? 'bg-blue-600/50 text-blue-200 cursor-not-allowed border border-blue-500/30'
+                : 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400 shadow-blue-500/20'
+            }`}
+            title="Sinkronkan posisi GPS seluruh armada langsung dengan API Tracksolid tanpa harus refresh browser"
+          >
+            <RefreshCw size={13} className={syncState.isSyncing || isManualSyncing ? 'animate-spin' : ''} />
+            <span>{syncState.isSyncing || isManualSyncing ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 🟢 TOAST / BANNER NOTIFIKASI SINKRONISASI OTOMATIS BERHASIL */}
+      {syncNotificationBanner && (
+        <div className="bg-emerald-950/90 border-b border-emerald-500/50 px-4 py-2 flex items-center justify-between text-xs text-emerald-200 animate-fadeIn backdrop-blur">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+            <span className="font-semibold text-emerald-100">{syncNotificationBanner}</span>
+          </div>
+          <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-900/60 px-2 py-0.5 rounded border border-emerald-500/30">
+            Peta Diperbarui Otomatis (Tanpa Refresh Halaman)
+          </span>
+        </div>
+      )}
 
       {/* 🔥 24-Hour Idling Summary Banner Bar */}
       {showIdleHeatmap && (

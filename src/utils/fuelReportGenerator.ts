@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import { FuelLog, VehicleType, EfficiencyStatus } from '../types';
 import { FUEL_TARGET_RATIOS } from '../data/fuelMockData';
+import { logisticsStore } from '../services/store';
 
 export interface WeekBounds {
   weekKey: string;      // e.g. "2026-W38"
@@ -814,7 +815,8 @@ export function exportFuelReportToPDF(options: {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.text('Admin Logistik & Efisiensi Armada', margin + 10, sigY + 10);
-  doc.text('( Dewi Anggraini, S.Log )', margin + 10, sigY + 27);
+  const coordinatorName = logisticsStore.getLogisticsCoordinator();
+  doc.text(`( ${coordinatorName} )`, margin + 10, sigY + 27);
 
   // Column 2: Diperiksa
   doc.setFont('helvetica', 'bold');

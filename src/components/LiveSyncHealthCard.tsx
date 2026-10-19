@@ -15,13 +15,15 @@ import {
   MapPin,
   Sparkles,
   Info,
-  Clock
+  Clock,
+  Radio
 } from 'lucide-react';
 import { logisticsStore } from '../services/store';
 import { googleSheetsSyncService, validateCoordinateData, CorruptedStoreIssue } from '../services/googleSheetsSyncService';
 import { DATA_FIX_SHEET_PRESETS, sanitizeCoordinate } from './GoogleSheetsStoreSyncModal';
 import { RetailStore } from '../types';
 import { useToast } from '../context/ToastContext';
+import { tracksolidSyncService, TracksolidSyncState } from '../services/tracksolidSyncService';
 
 export interface CoordinateDiscrepancyItem {
   id: string; // Store ID / UUID
@@ -46,6 +48,7 @@ export const LiveSyncHealthCard: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastCheckTime, setLastCheckTime] = useState<string>(new Date().toLocaleTimeString('id-ID'));
   const [simulatedRejections, setSimulatedRejections] = useState<CoordinateDiscrepancyItem[]>([]);
+  const [tracksolidState, setTracksolidState] = useState<TracksolidSyncState>(tracksolidSyncService.getState());
 
   useEffect(() => {
     const unsubStore = logisticsStore.subscribe(() => {
@@ -60,10 +63,14 @@ export const LiveSyncHealthCard: React.FC = () => {
     const unsubAutoSync = logisticsStore.onAutoSyncStatusChange((status) => {
       setAutoSyncStatus(status);
     });
+    const unsubTracksolid = tracksolidSyncService.subscribe((ts) => {
+      setTracksolidState(ts);
+    });
     return () => {
       unsubStore();
       unsubSync();
       unsubAutoSync();
+      unsubTracksolid();
     };
   }, []);
 
@@ -371,6 +378,24 @@ export const LiveSyncHealthCard: React.FC = () => {
         <div className="flex items-center gap-2 shrink-0 font-mono text-[11px] text-slate-400 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-800">
           <Clock className="w-3.5 h-3.5 text-blue-400" />
           <span>Sync: {autoSyncStatus.lastSyncTime ? new Date(autoSyncStatus.lastSyncTime).toLocaleTimeString('id-ID') : lastCheckTime}</span>
+        </div>
+      </div>
+
+      {/* 📡 Tracksolid Pro GPS 5-Minute Auto-Sync Telemetry Banner */}
+      <div className="px-5 py-2.5 bg-gradient-to-r from-blue-950/40 via-slate-950 to-emerald-950/30 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <Radio className="w-4 h-4 text-cyan-400 animate-pulse shrink-0" />
+          <p className="text-slate-300">
+            <strong className="text-cyan-400 font-semibold">GPS Tracksolid API Auto-Sync:</strong> Terhubung aktif dengan interval per 5 menit (300 detik) untuk memutakhirkan koordinat lokasi armada di peta secara otomatis tanpa reload halaman.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 font-mono text-[11px]">
+          <span className="px-2 py-0.5 rounded bg-blue-500/10 text-cyan-300 border border-blue-500/30">
+            Berikutnya: {tracksolidSyncService.formatCountdown(tracksolidState.countdownSeconds)}
+          </span>
+          <span className="text-slate-400 hidden md:inline">
+            • {tracksolidState.lastSyncTime || lastCheckTime} WIB
+          </span>
         </div>
       </div>
 

@@ -1,10 +1,17 @@
-export type UserRole = 'super_admin' | 'dispatcher' | 'driver' | 'sales_admin' | 'purchasing_admin' | 'hr_admin' | 'finance_tax_admin' | 'warehouse_admin' | 'marketing_online' | 'marketing_offline';
+export type UserRole = 'super_admin' | 'spv_logistik' | 'operasional' | 'security' | 'driver' | 'crew_helper' | 'sales_admin' | 'purchasing_admin' | 'hr_admin' | 'finance_tax_admin' | 'warehouse_admin' | 'marketing_online' | 'marketing_offline';
 export type UserApprovalStatus = 'approved' | 'pending' | 'rejected';
 
 export type FleetStatus = 'available' | 'on-duty' | 'maintenance';
 export type CrewStatus = 'available' | 'on-duty' | 'off';
-export type ShipmentStatus = 'scheduled' | 'in_transit' | 'delivered' | 'delayed';
+export type ShipmentStatus = 'scheduled' | 'picked_up' | 'in_transit' | 'delivered' | 'delayed';
 export type VehicleType = 'Pick Up Box' | 'Engkel STD' | 'Engkel Long' | 'Double STD';
+
+export interface UserPermissions {
+  modules: Record<string, {
+    enabled: boolean;
+    subMenus: Record<string, 'read_only' | 'full_access' | 'none'>;
+  }>;
+}
 
 export interface UserProfile {
   id: string;
@@ -19,6 +26,8 @@ export interface UserProfile {
   approvedAt?: string;
   approvedBy?: string;
   notes?: string;
+  permissions?: UserPermissions;
+  password?: string;
 }
 
 export interface Fleet {
@@ -33,6 +42,14 @@ export interface Fleet {
   year?: number;
   brand?: string;
   engineCc?: string;
+  boxCapacityM3?: number; // Kubikasi Box Luar (Gross m³)
+  boxDimensions?: string; // Dimensi Box Luar P x L x T (Meter)
+  boxInnerMultiplierPercent?: number; // Persentase Pengali Ukuran Dalam (contoh: 90% karena ketebalan dinding boks)
+  boxInnerCapacityM3?: number; // Hasil Kubikasi Efektif Dalam (Net m³ = Gross * Multiplier %)
+  boxInnerDimensions?: string; // Dimensi Box Dalam (P x L x T Bersih)
+  kirDocUrl?: string; // Bukti File / Foto Dokumen KIR Dishub
+  kirDocFileName?: string; // Nama File Dokumen KIR
+  kirDocUploadedAt?: string; // Tanggal Upload File Bukti KIR
   taxDueDate?: string; // Tanggal Jatuh Tempo Pajak (Tahunan)
   stnkExpiryDate?: string; // Masa Berlaku STNK / Plat (5 Tahunan)
   kirExpiryDate?: string; // Masa Berlaku Uji KIR Dishub (6 Bulanan / Berkala)
@@ -69,7 +86,7 @@ export interface Crew {
   phone: string;
   role: 'Driver Utama' | 'Driver Cadangan' | 'Kernet / Helper';
   licenseNumber: string;
-  licenseType: 'SIM B2 Umum' | 'SIM B1 Umum' | 'SIM A';
+  licenseType: 'SIM B2 Umum' | 'SIM B1 Umum' | 'SIM A' | '-' | string;
   status: CrewStatus;
   currentFleetId?: string;
   tripsCompleted: number;
@@ -128,6 +145,10 @@ export interface Schedule {
   areaName?: string;
   isUrgentOverride?: boolean; // Override flag for local-only crew assigned to out-of-town routes
   isManuallyEdited?: boolean; // Flag to indicate user made manual edits, preventing automatic overwrite
+  podPhotoUrl?: string; // Data URL or URL of the captured photo of delivered goods
+  podPhotoTimestamp?: string;
+  podReceiverName?: string;
+  podConditionNote?: string;
 }
 
 export interface CrewDeliveryHistory {
@@ -151,6 +172,8 @@ export interface CrewDeliveryHistory {
   delayReason?: string;
   ratingReceived: number; // 1-5
   notes?: string;
+  podPhotoUrl?: string; // Proof of delivery photo
+  podReceiverName?: string;
   requiresAreaApproval?: boolean;
   areaTripSequenceNumber?: number; // Pengiriman ke-X di area yang sama
   areaApprovalStatus?: 'approved' | 'pending' | 'not_required';
@@ -221,6 +244,81 @@ export interface TrackingEvaluation {
   delayMinutes: number;
   stops: RouteStop[];
   points: TrackingPoint[];
+}
+
+export interface TrackingLog {
+  id: string;
+  schedule_id: string;
+  timestamp: string;
+  latitude: number;
+  longitude: number;
+  speed: number; // in km/h
+  engine_status: 'RUNNING' | 'STOP' | 'IDLE';
+  location_name?: string;
+  created_at?: string;
+}
+
+export interface FleetPerformanceMetric {
+  fleetId: string;
+  plateNumber: string;
+  initialCode?: string;
+  vehicleType: string;
+  brand?: string;
+  totalDistanceKm: number;
+  avgSpeedKmh: number;
+  maxSpeedKmh: number;
+  idleTimeMinutes: number;
+  runningTimeMinutes: number;
+  stopTimeMinutes: number;
+  totalOperationMinutes: number;
+  idlePercentage: number;
+  totalSchedules: number;
+  completedDeliveries: number;
+  inTransitDeliveries: number;
+  delayedDeliveries: number;
+  onTimeCount: number;
+  onTimePercentage: number;
+  avgDelayMinutes: number;
+  cargoWeightTotalTon: number;
+  fuelUsedEstimatedLiters: number;
+  fuelEfficiencyKmPerLiter: number;
+}
+
+export interface CrewPerformanceMetric {
+  crewId: string;
+  name: string;
+  role: string;
+  phone: string;
+  rating: number;
+  tripsCompletedTotal: number;
+  totalDistanceKm: number;
+  avgSpeedKmh: number;
+  idleTimeMinutes: number;
+  runningTimeMinutes: number;
+  idlePercentage: number;
+  totalSchedules: number;
+  completedDeliveries: number;
+  inTransitDeliveries: number;
+  delayedDeliveries: number;
+  onTimeCount: number;
+  onTimePercentage: number;
+  avgDelayMinutes: number;
+  punctualityScore: number;
+  topDestinationArea?: string;
+}
+
+export interface OverallAnalyticsSummary {
+  totalDistanceKm: number;
+  avgFleetSpeedKmh: number;
+  overallIdlePercentage: number;
+  totalCompletedDeliveries: number;
+  totalScheduledDeliveries: number;
+  overallOnTimePercentage: number;
+  totalCargoTon: number;
+  totalTrackingPoints: number;
+  activeFleetsCount: number;
+  activeCrewsCount: number;
+  averageDeliveryDurationHours: number;
 }
 
 export interface TracksolidDevice {
@@ -457,6 +555,37 @@ export interface AttendanceRecord {
   reason?: string;
 }
 
+// ==========================================
+// DRIVER SHIFT CHECK-IN (PRESENSI SHIFT SUPIR)
+// ==========================================
+export type ShiftVerificationMethod = 'biometric' | 'pin';
+export type DriverShiftStatus = 'checked_in' | 'on_duty' | 'break' | 'checked_out';
+
+export interface DriverShiftCheckin {
+  id: string; // e.g. 'SHIFT-20261008-001'
+  driverId: string;
+  driverName: string;
+  fleetId?: string;
+  plateNumber?: string;
+  vehicleType?: string;
+  date: string; // YYYY-MM-DD
+  checkinTime: string; // ISO string
+  checkinTimeFormatted: string; // e.g. "07:15 WIB"
+  checkoutTime?: string;
+  checkoutTimeFormatted?: string;
+  verificationMethod: ShiftVerificationMethod; // 'biometric' | 'pin'
+  biometricType?: 'fingerprint' | 'face_id';
+  locationName: string; // e.g. 'DC PT. Anugrah Kemasan Kreatif - Banyuwangi'
+  latitude?: number;
+  longitude?: number;
+  status: DriverShiftStatus;
+  shiftName: string; // 'Shift Pagi (06:00 - 15:00 WIB)' | 'Shift Siang' | 'Shift Khusus Antar-Kota'
+  odometerStartKm?: number;
+  notes?: string;
+  synced: boolean;
+  createdAt: string;
+}
+
 export interface SwapShiftRequest {
   id: string;
   requesterCrewId: string;
@@ -525,4 +654,181 @@ export interface FleetTireWearPrediction {
   pressurePsi: number; // Sensor / inspection PSI
   recommendedPressurePsi: number;
 }
+
+export type ScannedDocumentType = 'delivery_slip' | 'inspection_form' | 'service_order' | 'fuel_receipt' | 'other';
+
+export interface ScannedDocumentLog {
+  id: string; // e.g. 'DOC-SCAN-1728392100'
+  documentType: ScannedDocumentType;
+  documentTypeLabel: string; // 'Surat Jalan (Delivery Slip)', 'Formulir Inspeksi Armada', etc.
+  documentNumber: string; // No. Surat Jalan / No. Form
+  date: string; // YYYY-MM-DD
+  timestamp: string; // ISO String
+  capturedBy: string; // Petugas / User
+  vehiclePlate?: string; // Plat armada
+  driverName?: string; // Nama pengemudi / checker
+  destinationOrStore?: string; // Outlet / Lokasi tujuan
+  status: 'verified' | 'pending_review' | 'flagged';
+  cargoOrItemsSummary?: string; // Deskripsi muatan atau poin checklist
+  quantityOrWeight?: string; // e.g. "350 Box (4.2 Ton)"
+  inspectionScore?: string; // e.g. "Lulus (18/18)"
+  notes?: string; // Catatan temuan / kendala
+  signaturesDetected?: boolean; // Tanda tangan terdeteksi
+  rawExtractedText: string; // Teks lengkap untuk pencarian cepat
+  confidenceScore: number; // 0.0 - 1.0
+  photoDataUrl: string; // Foto dokumen (Base64)
+  source: 'camera' | 'upload';
+}
+
+// ==========================================
+// DRIVER VEHICLE CHECKLIST (INSPEKSI ARMADA)
+// ==========================================
+export type ChecklistItemCategory = 'mesin_fluida' | 'rem_roda' | 'lampu_listrik' | 'fisik_dokumen' | 'darurat_k3';
+export type ChecklistItemStatus = 'ok' | 'issue' | 'na';
+export type OverallChecklistStatus = 'passed' | 'warning' | 'failed';
+
+export interface VehicleChecklistItem {
+  id: string;
+  category: ChecklistItemCategory;
+  categoryLabel: string;
+  name: string;
+  description: string;
+  status: ChecklistItemStatus;
+  note?: string;
+  photoUrl?: string;
+}
+
+export interface DriverVehicleChecklist {
+  id: string;
+  driverId: string;
+  driverName: string;
+  fleetId: string;
+  plateNumber: string;
+  vehicleType: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:mm
+  odometerKm: number;
+  fuelLevelPercent: number;
+  inspectionType: 'pre_trip' | 'post_trip';
+  overallStatus: OverallChecklistStatus;
+  passedCount: number;
+  issueCount: number;
+  items: VehicleChecklistItem[];
+  notes?: string;
+  photoEvidenceUrl?: string;
+  driverSignature?: string; // Tanda tangan digital
+  checkerName?: string; // Nama checker/supervisor yang memverifikasi
+  checkerSigned?: boolean;
+  synced: boolean;
+  createdAt: string;
+}
+
+// ========================================================
+// SURAT JALAN KELUAR (OUTBOUND DELIVERY WAYBILL / SJ KELUAR)
+// ========================================================
+export type OutboundWaybillStatus = 'draft' | 'loading' | 'sealed' | 'checker_verified' | 'gate_out' | 'in_transit' | 'delivered';
+
+export interface OutboundWaybillCargoItem {
+  id: string;
+  itemCode: string;
+  description: string;
+  boxDimensions?: string; // e.g. "40 x 30 x 25 cm"
+  quantity: number;
+  unit: string; // 'Koli', 'Box', 'Bundle'
+  weightKg: number;
+  notes?: string;
+}
+
+export interface OutboundWaybill {
+  id: string;
+  waybillNumber: string; // e.g. "SJ-OUT/AKK/2026/10/08-0142"
+  scheduleId: string;
+  trackingNumber: string;
+  poNumber?: string;
+  date: string; // YYYY-MM-DD
+  gateOutTime?: string; // Jam keluar gerbang DC
+  estimatedArrival?: string;
+  originWarehouse: {
+    name: string;
+    address: string;
+    phone: string;
+    gateNumber?: string;
+  };
+  destination: {
+    storeName: string;
+    areaName: string;
+    city: string;
+    province: string;
+    address: string;
+    contactPerson: string;
+    phone: string;
+  };
+  fleet: {
+    id: string;
+    plateNumber: string;
+    vehicleType: string;
+    initialCode?: string;
+  };
+  crew: {
+    driverId: string;
+    driverName: string;
+    driverPhone: string;
+    licenseType?: string;
+    helperName?: string;
+    helper2Name?: string;
+  };
+  cargoItems: OutboundWaybillCargoItem[];
+  totalKoli: number;
+  totalWeightKg: number;
+  securitySealNumber: string; // e.g. "SEAL-AKK-9841"
+  status: OutboundWaybillStatus;
+  statusLabel: string;
+  checkerName: string; // Checker Gudang DC
+  checkerNotes?: string;
+  driverNotes?: string;
+  signedByDriver: boolean;
+  signedByDriverAt?: string;
+  signedByChecker: boolean;
+  signedByCheckerAt?: string;
+  // 4 Roles Digital Signature Details
+  preparedByName?: string; // SPV Logistik
+  preparedBySigned?: boolean;
+  preparedBySignedAt?: string;
+  preparedBySignatureSvg?: string;
+  acknowledgedByName?: string; // Operasional
+  acknowledgedBySigned?: boolean;
+  acknowledgedBySignedAt?: string;
+  acknowledgedBySignatureSvg?: string;
+  securityOfficerName?: string; // Security
+  securitySigned?: boolean;
+  securitySignedAt?: string;
+  securitySignatureSvg?: string;
+  driverSigned?: boolean; // Driver / Helper
+  driverSignedAt?: string;
+  driverSignatureSvg?: string;
+  qrCodeData: string;
+  synced: boolean;
+  createdAt: string;
+}
+
+// ==========================================
+// GA: SECURITY GATE LOG (POS SATPAM & GUDANG)
+// ==========================================
+export interface SecurityGateLog {
+  id: string; // e.g. 'SEC-101'
+  timestamp: string; // ISO String
+  time: string; // '08:15 WIB'
+  type: 'Kendaraan Masuk' | 'Kendaraan Keluar' | 'Tamu Rekanan' | 'Patroli Satpam';
+  entity: string; // Kendaraan / Pihak
+  driver: string; // Pengemudi / Petugas
+  purpose: string; // Keperluan / Muatan
+  status: 'Gate-Out' | 'Diizinkan' | 'Tiba di Gudang' | 'Selesai' | 'Aman';
+  scheduleId?: string;
+  plateNumber?: string;
+  initialCode?: string;
+  securityOfficer?: string;
+  notes?: string;
+}
+
+
 

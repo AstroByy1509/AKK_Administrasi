@@ -52,7 +52,7 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onSelectTab 
     if (currentUser.role === 'sales_admin') {
       return item.id === 'dashboard' || item.id === 'tracking_eval';
     }
-    if (currentUser.role === 'driver' || currentUser.role === 'dispatcher') {
+    if (currentUser.role === 'driver' || currentUser.role === 'spv_logistik') {
       return item.id !== 'tracksolid' && item.id !== 'architecture';
     }
     return true;
@@ -102,7 +102,7 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onSelectTab 
                 <div className="text-xs font-bold text-white leading-tight">{currentUser.fullName}</div>
                 <div className="text-[10px] text-slate-400 capitalize">
                   {currentUser.role === 'super_admin' && 'Super Admin (Logistik Mgr)'}
-                  {currentUser.role === 'dispatcher' && 'Dispatcher / Planner'}
+                  {currentUser.role === 'spv_logistik' && 'Dispatcher / Planner'}
                   {currentUser.role === 'driver' && 'Driver / Kru Lapangan'}
                   {currentUser.role === 'sales_admin' && 'Adm. Penjualan'}
                 </div>
@@ -132,16 +132,16 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onSelectTab 
                 </button>
 
                 <button
-                  onClick={() => handleSwitchRole('dispatcher')}
+                  onClick={() => handleSwitchRole('spv_logistik')}
                   className={`w-full text-left p-2.5 rounded-lg flex items-center justify-between transition cursor-pointer ${
-                    currentUser.role === 'dispatcher' ? 'bg-blue-600/20 text-blue-300 font-semibold' : 'text-slate-300 hover:bg-slate-800'
+                    currentUser.role === 'spv_logistik' ? 'bg-blue-600/20 text-blue-300 font-semibold' : 'text-slate-300 hover:bg-slate-800'
                   }`}
                 >
                   <div>
                     <div className="font-bold">Dispatcher / Route Planner</div>
                     <div className="text-[10px] text-slate-400">Penjadwalan, armada, tiket kapal</div>
                   </div>
-                  {currentUser.role === 'dispatcher' && <Shield className="w-3.5 h-3.5 text-blue-400" />}
+                  {currentUser.role === 'spv_logistik' && <Shield className="w-3.5 h-3.5 text-blue-400" />}
                 </button>
 
                 <button

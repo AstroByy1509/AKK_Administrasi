@@ -270,8 +270,18 @@ export class ScheduleInitializerService {
       // Calculate departure and arrival date
       const routeDate = new Date(targetMonday);
       routeDate.setDate(targetMonday.getDate() + config.dayOffset);
-      const departureHour = 6 + (idx % 3);
-      const departureMin = (idx * 15) % 60;
+      
+      const isOutboundLuarKotaTarget = 
+        config.island === 'Bali & Nusa Tenggara' ||
+        config.province.toLowerCase().includes('bali') ||
+        config.city.toLowerCase().includes('bondowoso') ||
+        config.city.toLowerCase().includes('jember') ||
+        config.storeName.toLowerCase().includes('bondowoso') ||
+        config.storeName.toLowerCase().includes('jember') ||
+        config.storeName.toLowerCase().includes('bali');
+
+      const departureHour = isOutboundLuarKotaTarget ? 21 : (6 + (idx % 3));
+      const departureMin = isOutboundLuarKotaTarget ? 0 : ((idx * 15) % 60);
       routeDate.setHours(departureHour, departureMin, 0, 0);
       const arrivalDate = new Date(routeDate.getTime() + config.estimatedHours * 3600000);
 

@@ -1058,13 +1058,20 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onNaviga
           </div>
 
           {/* Bottom Action */}
-          <div className="mt-4 pt-3 border-t border-slate-800/70 flex items-center justify-between text-xs">
+          <div className="mt-4 pt-3 border-t border-slate-800/70 flex items-center justify-between text-xs flex-wrap gap-2">
             <button
               onClick={() => onNavigate('schedules')}
               className="text-slate-400 hover:text-white transition cursor-pointer flex items-center gap-1"
             >
               <Calendar className="w-3.5 h-3.5 text-blue-400" />
-              <span>Kelola Jadwal Pengiriman</span>
+              <span>Kelola Jadwal</span>
+            </button>
+            <button
+              onClick={() => onNavigate('analytics_reports')}
+              className="text-amber-400 hover:text-amber-300 font-bold transition cursor-pointer flex items-center gap-1"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Analitik Armada &amp; Kru</span>
             </button>
             <button
               onClick={() => onNavigate('tracksolid')}

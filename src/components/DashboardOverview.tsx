@@ -38,7 +38,8 @@ import {
   Sliders,
   Settings,
   X,
-  Save
+  Save,
+  BarChart3
 } from 'lucide-react';
 import { FleetPerformanceInsight } from './FleetPerformanceInsight';
 import { FleetTaxMonitoringPanel } from './FleetTaxMonitoringPanel';
@@ -1252,6 +1253,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
               <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
               <span>Import Excel GPS</span>
             </button>
+            <button
+              onClick={() => onNavigate('analytics_reports')}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-bold border border-amber-500/40 shadow-xs transition cursor-pointer"
+              title="Buka Laporan Analitik Performa Armada & Kru"
+            >
+              <BarChart3 className="w-4 h-4 text-amber-400" />
+              <span>Analitik Performa</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1440,7 +1449,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                   </span>
                 </div>
                 <div className="text-xs text-slate-300">
-                  <strong>Inisial Mobil:</strong> <span className="font-mono font-bold text-emerald-400">{selectedFleet.initialCode || '-'}</span> &bull; <strong>Tipe:</strong> {selectedFleet.vehicleType} &bull; <strong>Kapasitas:</strong> {selectedFleet.tonnageCapacity || 15} Ton
+                  <strong>Inisial Mobil:</strong> <span className="font-mono font-bold text-emerald-400">{selectedFleet.initialCode || '-'}</span> &bull; <strong>Tipe:</strong> {selectedFleet.vehicleType} &bull; <strong>Kapasitas:</strong> {selectedFleet.tonnageCapacity || 15} Ton &bull; <strong>Kubikasi Box:</strong> <span className="font-mono text-cyan-400 font-bold">{selectedFleet.boxCapacityM3 || (selectedFleet.vehicleType.includes('Pick Up') ? 5.5 : selectedFleet.vehicleType.includes('Long') ? 14 : selectedFleet.vehicleType.includes('Engkel') ? 9 : 17.5)} m³</span>
                 </div>
                 <div className="text-xs text-slate-400 flex flex-wrap items-center gap-3">
                   <span>
@@ -1533,7 +1542,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
           <div className="flex items-center justify-between text-xs text-slate-400 mt-2.5">
             {selectedFleet ? (
               <>
-                <span>Kapasitas: <strong className="text-emerald-400 font-bold">{selectedFleet.tonnageCapacity || 15} Ton</strong></span>
+                <span>Kap: <strong className="text-emerald-400 font-bold">{selectedFleet.tonnageCapacity || 15} Ton</strong> &bull; <strong className="text-cyan-400 font-bold">{selectedFleet.boxCapacityM3 || (selectedFleet.vehicleType.includes('Pick Up') ? 5.5 : selectedFleet.vehicleType.includes('Long') ? 14 : selectedFleet.vehicleType.includes('Engkel') ? 9 : 17.5)} m³</strong></span>
                 <span>Odo: <strong className="text-white font-bold">{(selectedFleet.odometerKm || 120000).toLocaleString()} km</strong></span>
               </>
             ) : (
@@ -2150,7 +2159,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onNavigate
                       </span>
                     </div>
                     <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                      Waktu tempuh armada pengiriman aktif telah melewati batas toleransi 80% dari target SLA. Sistem otomatis menembakkan notifikasi peringatan (toast) agar dispatcher dapat mengantisipasi potensi keterlambatan.
+                      Waktu tempuh armada pengiriman aktif telah melewati batas toleransi 80% dari target SLA. Sistem otomatis menembakkan notifikasi peringatan (toast) agar spv_logistik dapat mengantisipasi potensi keterlambatan.
                     </p>
                   </div>
                 </div>

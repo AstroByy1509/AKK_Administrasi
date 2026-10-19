@@ -360,7 +360,10 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
 
   const getDriverName = (id: string) => crews.find(c => c.id === id)?.name || 'Belum Ditunjuk';
   const getHelperName = (id: string) => crews.find(c => c.id === id)?.name || 'Tanpa Helper';
-  const getFleetName = (id: string) => fleets.find(f => f.id === id)?.plateNumber || 'Armada Standar';
+  const getFleetName = (id: string) => {
+    const f = fleets.find(item => item.id === id);
+    return f ? `${f.plateNumber}${f.initialCode ? ` (${f.initialCode})` : ''}` : 'Armada Standar';
+  };
 
   const applyRouteChange = (routeId: string, field: 'driverId' | 'helperId' | 'truckId', value: string) => {
     setAllWeeksData(prev => {
@@ -1061,7 +1064,9 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                             className="bg-slate-900 border border-slate-800 text-white rounded-lg px-2 py-1.5 focus:outline-none w-full text-xs font-medium mt-1"
                           >
                             {fleets.map(f => (
-                              <option key={f.id} value={f.id}>{f.plateNumber} ({f.vehicleType})</option>
+                              <option key={f.id} value={f.id}>
+                                {f.plateNumber} {f.initialCode ? `(${f.initialCode})` : ''} ({f.vehicleType})
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -1218,7 +1223,9 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                               className="bg-slate-900 border border-slate-800 text-white rounded-lg px-2 py-1 text-xs w-full"
                             >
                               {fleets.map(f => (
-                                <option key={f.id} value={f.id}>{f.plateNumber} ({f.vehicleType})</option>
+                                <option key={f.id} value={f.id}>
+                                  {f.plateNumber} {f.initialCode ? `(${f.initialCode})` : ''} ({f.vehicleType})
+                                </option>
                               ))}
                             </select>
                           </td>
@@ -1561,7 +1568,7 @@ export const CrewSimulationModal: React.FC<CrewSimulationModalProps> = ({
                 <option value="">-- Pilih Truk --</option>
                 {fleets.map(f => (
                   <option key={f.id} value={f.id}>
-                    {f.plateNumber} ({f.vehicleType} - {f.tonnageCapacity || 2} Ton)
+                    {f.plateNumber} {f.initialCode ? `(${f.initialCode})` : ''} ({f.vehicleType} - {f.tonnageCapacity || 2} Ton)
                   </option>
                 ))}
               </select>

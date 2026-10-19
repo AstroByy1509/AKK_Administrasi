@@ -6,9 +6,14 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:portal": "BUILD_TARGET=portal vite build",
+    "build:driver": "BUILD_TARGET=driver vite build",
+    "build:both": "BUILD_TARGET=portal vite build && BUILD_TARGET=driver vite build",
+    "build:apk": "python3 scripts/build_apk.py",
     "start": "node server.ts",
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "clean": "rm -rf dist dist-portal dist-driver",
+    "lint": "tsc --noEmit",
+    "test": "tsx scripts/run_e2e_tests.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

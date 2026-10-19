@@ -381,6 +381,7 @@ export const CrewPoolManagementModal: React.FC<CrewPoolManagementModalProps> = (
                     <option value="SIM B2 Umum">SIM B2 Umum</option>
                     <option value="SIM B1 Umum">SIM B1 Umum</option>
                     <option value="SIM A">SIM A</option>
+                    <option value="-">- (Tanpa SIM / Belum Ada)</option>
                   </select>
                 </div>
               </div>

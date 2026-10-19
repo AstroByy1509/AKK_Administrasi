@@ -280,14 +280,14 @@ export const SupabaseSqlArchitecture: React.FC = () => {
 create extension if not exists "uuid-ossp";
 
 -- 2. User Roles Enum for RBAC
-create type user_role as enum ('super_admin', 'dispatcher', 'driver');
+create type user_role as enum ('super_admin', 'spv_logistik', 'driver');
 
 -- 3. PROFILES (Extends Supabase auth.users)
 create table public.profiles (
   id uuid references auth.users on delete cascade primary key,
   email text unique not null,
   full_name text not null,
-  role user_role default 'dispatcher'::user_role,
+  role user_role default 'spv_logistik'::user_role,
   department text default 'Logistics Operations',
   phone text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
@@ -338,13 +338,13 @@ create policy "Fleets readable by all authenticated users"
   to authenticated
   using (true);
 
-create policy "Fleets modifiable by admins and dispatchers"
+create policy "Fleets modifiable by admins and spv_logistiks"
   on public.fleets for all
   to authenticated
   using (
     exists (
       select 1 from public.profiles
-      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'dispatcher')
+      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'spv_logistik')
     )
   );
 
@@ -369,13 +369,13 @@ create policy "Crews viewable by authenticated users"
   to authenticated
   using (true);
 
-create policy "Crews modifiable by admins and dispatchers"
+create policy "Crews modifiable by admins and spv_logistiks"
   on public.crews for all
   to authenticated
   using (
     exists (
       select 1 from public.profiles
-      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'dispatcher')
+      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'spv_logistik')
     )
   );
 
@@ -404,13 +404,13 @@ create policy "Stores viewable by all authenticated users"
   to authenticated
   using (true);
 
-create policy "Stores modifiable by dispatchers and admins"
+create policy "Stores modifiable by spv_logistiks and admins"
   on public.stores for all
   to authenticated
   using (
     exists (
       select 1 from public.profiles
-      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'dispatcher')
+      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'spv_logistik')
     )
   );
 
@@ -444,13 +444,13 @@ create policy "Schedules viewable by all authenticated users"
   to authenticated
   using (true);
 
-create policy "Schedules modifiable by dispatchers and admins"
+create policy "Schedules modifiable by spv_logistiks and admins"
   on public.schedules for all
   to authenticated
   using (
     exists (
       select 1 from public.profiles
-      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'dispatcher')
+      where profiles.id = auth.uid() and profiles.role in ('super_admin', 'spv_logistik')
     )
   );
 

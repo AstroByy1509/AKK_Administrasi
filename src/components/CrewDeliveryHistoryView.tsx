@@ -19,17 +19,21 @@ import {
   FileText, 
   Sparkles, 
   ArrowRight,
-  RotateCcw
+  RotateCcw,
+  FileDown
 } from 'lucide-react';
-import { Crew, CrewDeliveryHistory, AreaApprovalRequest, AreaDeliveryStat } from '../types';
+import { Crew, CrewDeliveryHistory, AreaApprovalRequest, AreaDeliveryStat, Fleet } from '../types';
 import { logisticsStore } from '../services/store';
 import { AreaApprovalModal } from './AreaApprovalModal';
+import { CrewReportDownloadModal } from './CrewReportDownloadModal';
 
 export const CrewDeliveryHistoryView: React.FC = () => {
   const [crews, setCrews] = useState<Crew[]>(logisticsStore.getCrews());
+  const [fleets, setFleets] = useState<Fleet[]>(logisticsStore.getFleets());
   const [history, setHistory] = useState<CrewDeliveryHistory[]>(logisticsStore.getCrewDeliveryHistory());
   const [approvalRequests, setApprovalRequests] = useState<AreaApprovalRequest[]>(logisticsStore.getAreaApprovalRequests());
   const [threshold, setThreshold] = useState<number>(logisticsStore.getAreaDeliveryThreshold());
+  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
 
   const [selectedCrewId, setSelectedCrewId] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<number>(0); // Default to Januari (0)
@@ -85,6 +89,7 @@ export const CrewDeliveryHistoryView: React.FC = () => {
 
     return logisticsStore.subscribe(() => {
       setCrews(logisticsStore.getCrews());
+      setFleets(logisticsStore.getFleets());
       const updated = logisticsStore.getCrewDeliveryHistory();
       setHistory(updated);
       setApprovalRequests(logisticsStore.getAreaApprovalRequests());
@@ -300,6 +305,15 @@ export const CrewDeliveryHistoryView: React.FC = () => {
 
           {/* Quick Actions & Configurable Threshold Selector */}
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setIsReportModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold transition flex items-center gap-2 shadow-md cursor-pointer border border-emerald-500/30"
+              title="Cetak & Unduh Laporan PDF Kinerja Pengiriman Kru Berdasarkan Rentang Tanggal"
+            >
+              <FileDown className="w-4 h-4 text-emerald-200" />
+              <span>Cetak Laporan PDF Kinerja</span>
+            </button>
+
             <button
               onClick={handleManualSyncHistory}
               className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-2 shadow-md cursor-pointer"

@@ -451,11 +451,18 @@ class GoogleSheetsSyncService {
       try {
         const proxyUrl = `/api/proxy-sheet?url=${encodeURIComponent(csvUrl)}`;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort('Proxy request timeout'), 6000);
-        const proxyRes = await fetch(proxyUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (proxyRes.ok) {
-          response = proxyRes;
+        const timeoutId = setTimeout(() => {
+          try { controller.abort(); } catch { /* ignore */ }
+        }, 8000);
+        
+        try {
+          const proxyRes = await fetch(proxyUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (proxyRes && proxyRes.ok) {
+            response = proxyRes;
+          }
+        } catch {
+          clearTimeout(timeoutId);
         }
       } catch {
         // Server proxy unavailable or timed out, attempt direct fetch
@@ -463,10 +470,24 @@ class GoogleSheetsSyncService {
 
       // 2. Fallback to direct fetch if proxy route wasn't available
       if (!response) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort('Direct fetch timeout'), 6000);
-        response = await fetch(csvUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            try { controller.abort(); } catch { /* ignore */ }
+          }, 6000);
+
+          try {
+            const directRes = await fetch(csvUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (directRes && directRes.ok) {
+              response = directRes;
+            }
+          } catch {
+            clearTimeout(timeoutId);
+          }
+        } catch {
+          // Fallback smoothly without unhandled errors
+        }
       }
 
       if (response && response.ok) {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AkkLogo } from './AkkLogo';
-import { LogIn, UserPlus, KeyRound, Mail, User, Building, Phone, ShieldCheck, Clock, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
+import { LogIn, UserPlus, KeyRound, Mail, User, Building, Phone, ShieldCheck, Clock, CheckCircle2, AlertCircle, X, Sparkles, Eye, EyeOff } from 'lucide-react';
 import { UserRole, UserProfile } from '../types';
 import { logisticsStore } from '../services/store';
 
@@ -18,6 +18,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [tab, setTab] = useState<'login' | 'register'>(defaultTab);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -26,7 +27,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     fullName: '',
     email: '',
     phone: '',
-    role: 'dispatcher' as UserRole,
+    role: 'spv_logistik' as UserRole,
     department: 'Gudang Distribusi Packaging Banyuwangi',
     password: '',
     confirmPassword: ''
@@ -37,13 +38,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    const user = logisticsStore.loginUser(loginEmail);
+    const user = logisticsStore.loginUser(loginEmail, loginPassword);
     if (!user) {
-      setErrorMsg('Email tidak ditemukan. Silakan periksa kembali atau daftar akun baru.');
+      setErrorMsg('Username/Email atau Password salah. Silakan periksa kembali.');
       return;
     }
 
-    setSuccessMsg(`Berhasil masuk sebagai ${user.fullName}`);
+    setSuccessMsg(user.role === 'super_admin' ? 'Berhasil masuk sebagai Super Admin' : `Berhasil masuk sebagai ${user.fullName}`);
     setTimeout(() => {
       onClose();
     }, 600);
@@ -52,7 +53,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleQuickLogin = (email: string) => {
     const user = logisticsStore.loginUser(email);
     if (user) {
-      setSuccessMsg(`Berhasil login sebagai ${user.fullName}`);
+      setSuccessMsg(user.role === 'super_admin' ? 'Berhasil masuk sebagai Super Admin' : `Berhasil login sebagai ${user.fullName}`);
       setTimeout(() => {
         onClose();
       }, 500);
@@ -83,10 +84,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       notes: 'Pendaftaran mandiri melalui portal AKK - Menunggu verifikasi'
     });
 
-    setSuccessMsg(`Pendaftaran berhasil! Akun Anda (${newUser.fullName}) kini berstatus Menunggu Persetujuan (Pending Approval) oleh Manager Operasional AKK.`);
+    setSuccessMsg(`Pendaftaran berhasil! Akun "${newUser.fullName}" terdaftar dan menunggu persetujuan (Pending Approval) Super Admin.`);
     setTimeout(() => {
-      onClose();
-    }, 1500);
+      setTab('login');
+      setSuccessMsg('Pendaftaran berhasil! Silakan masuk menggunakan email dan password Anda setelah akun disetujui Super Admin.');
+    }, 1200);
   };
 
   return (
@@ -155,18 +157,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="p-6">
           {tab === 'login' ? (
             <div className="space-y-4">
-              <form onSubmit={handleLogin} className="space-y-3.5 text-xs">
+              <form onSubmit={handleLogin} className="space-y-4 text-xs">
                 <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Email Karyawan</label>
+                  <label className="text-slate-300 font-semibold block mb-1">Email / Username</label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                     <input
-                      type="email"
+                      type="text"
                       required
-                      placeholder="nama@akk-packaging.co.id"
+                      placeholder="admin atau nama@gmail.com"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                     />
                   </div>
                 </div>
@@ -174,77 +176,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div>
                   <label className="text-slate-300 font-semibold block mb-1">Password</label>
                   <div className="relative">
-                    <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                     <input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
                       placeholder="••••••••"
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                      className="w-full pl-9 pr-10 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3 text-slate-400 hover:text-white cursor-pointer"
+                      title={showPassword ? 'Sembunyikan password' : 'Lihat password'}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer"
+                  className="w-full py-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer"
                 >
                   Masuk ke Portal AKK
                 </button>
               </form>
-
-              {/* Quick Login Presets */}
-              <div className="pt-4 border-t border-slate-800">
-                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                  <span>Pilih Akun Cepat (Simulasi Peran):</span>
-                  <span className="text-[10px] text-amber-400">1-Click Test</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-left text-[11px]">
-                  <button
-                    onClick={() => handleQuickLogin('admin.logistik@akk-packaging.co.id')}
-                    className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition"
-                  >
-                    <div className="font-bold text-amber-400 flex items-center gap-1">
-                      <span>👑 Super Admin</span>
-                    </div>
-                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Bayu Novianto Dimas Permana, S.Si</div>
-                  </button>
-
-                  <button
-                    onClick={() => handleQuickLogin('planner.jawa@akk-packaging.co.id')}
-                    className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition"
-                  >
-                    <div className="font-bold text-blue-400 flex items-center gap-1">
-                      <span>🚛 Dispatcher</span>
-                    </div>
-                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Dewi Anggraini, S.Log</div>
-                  </button>
-
-                  <button
-                    onClick={() => handleQuickLogin('driver.zainul@akk-packaging.co.id')}
-                    className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition"
-                  >
-                    <div className="font-bold text-emerald-400 flex items-center gap-1">
-                      <span>🚚 Supir / Driver</span>
-                    </div>
-                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Zainul Agustiar (Driver)</div>
-                  </button>
-
-                  <button
-                    onClick={() => handleQuickLogin('bayu.nugroho@akk-packaging.co.id')}
-                    className="p-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-left transition"
-                  >
-                    <div className="font-bold text-amber-300 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>⏳ Akun Pending</span>
-                    </div>
-                    <div className="text-slate-300 text-[10px] mt-0.5 truncate">Bayu Nugroho (Menunggu)</div>
-                  </button>
-                </div>
-              </div>
             </div>
           ) : (
-            <form onSubmit={handleRegister} className="space-y-3 text-xs">
+            <form onSubmit={handleRegister} className="space-y-3.5 text-xs">
               <div>
                 <label className="text-slate-300 font-semibold block mb-1">Nama Lengkap</label>
                 <div className="relative">
@@ -252,7 +213,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: Bayu Nugroho, S.T."
+                    placeholder="Contoh: Bayu Dimas Permana"
                     value={registerData.fullName}
                     onChange={(e) => setRegisterData({ ...registerData, fullName: e.target.value })}
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
@@ -266,7 +227,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <input
                     type="email"
                     required
-                    placeholder="nama@akk-packaging.co.id"
+                    placeholder="nama@gmail.com"
                     value={registerData.email}
                     onChange={(e) => setRegisterData({ ...registerData, email: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
@@ -285,52 +246,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Peran Diajukan</label>
-                  <select
-                    value={registerData.role}
-                    onChange={(e) => setRegisterData({ ...registerData, role: e.target.value as UserRole })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
-                  >
-                    <option value="dispatcher">Dispatcher / Planner</option>
-                    <option value="driver">Kru Supir Ekspedisi</option>
-                    <option value="super_admin">Manager Operasional</option>
-                    <option value="marketing_online">Marketing Online</option>
-                    <option value="marketing_offline">Marketing Offline</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Departemen / Unit</label>
-                  <input
-                    type="text"
-                    required
-                    value={registerData.department}
-                    onChange={(e) => setRegisterData({ ...registerData, department: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="relative">
                   <label className="text-slate-300 font-semibold block mb-1">Password</label>
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     placeholder="Minimal 6 karakter"
                     value={registerData.password}
                     onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   />
                 </div>
-                <div>
+                <div className="relative">
                   <label className="text-slate-300 font-semibold block mb-1">Konfirmasi Password</label>
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     placeholder="Ulangi password"
                     value={registerData.confirmPassword}
                     onChange={(e) => setRegisterData({ ...registerData, confirmPassword: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-8 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
               </div>
 
@@ -339,7 +280,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <Clock className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
                 <div>
                   <strong className="block text-amber-300 font-bold">Prosedur Verifikasi Akun AKK:</strong>
-                  Pendaftaran akun baru wajib disetujui (di-approve) oleh Manager Operasional / Administrator Pusat PT Anugrah Kemasan Kreatif sebelum mendapatkan otorisasi pengiriman.
+                  Pendaftaran akun baru wajib disetujui (di-approve) oleh Super Admin PT Anugrah Kemasan Kreatif sebelum mendapatkan otorisasi akses menu.
                 </div>
               </div>
 

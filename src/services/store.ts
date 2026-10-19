@@ -31,7 +31,10 @@ import {
   TaxKirType,
   TaxKirUrgency,
   ImageRecord,
-  AutoSyncStatus
+  AutoSyncStatus,
+  ScannedDocumentLog,
+  ScannedDocumentType,
+  SecurityGateLog
 } from '../types';
 import {
   INITIAL_FLEETS,
@@ -41,7 +44,8 @@ import {
   INITIAL_TRACKSOLID_DEVICES,
   INITIAL_PROFILES,
   INITIAL_CREW_HISTORY,
-  INITIAL_AREA_APPROVALS
+  INITIAL_AREA_APPROVALS,
+  INITIAL_SCANNED_DOCUMENTS
 } from '../data/mockData';
 import {
   INITIAL_SALES_ORDERS,
@@ -67,7 +71,7 @@ const STORAGE_KEYS = {
   SCHEDULES: 'akk_schedules_v1',
   DEVICES: 'akk_devices_v1',
   CURRENT_USER: 'akk_user_v1',
-  USERS: 'akk_users_list_v1',
+  USERS: 'akk_users_list_v2',
   SUPABASE_CONFIG: 'akk_supabase_config_v1',
   CREW_HISTORY: 'akk_crew_history_v1',
   AREA_APPROVALS: 'akk_area_approvals_v1',
@@ -81,13 +85,37 @@ const STORAGE_KEYS = {
   SPARE_PARTS: 'akk_spare_parts_v1',
   SPARE_PART_USAGES: 'akk_spare_part_usages_v1',
   FUEL_LOGS: 'akk_fuel_logs_v1',
-  IMAGES: 'akk_images_storage_v1'
+  IMAGES: 'akk_images_storage_v1',
+  SCANNED_DOCUMENTS: 'akk_scanned_documents_v1',
+  SECURITY_LOGS: 'akk_security_logs_v1'
 };
+
+export const INITIAL_SECURITY_LOGS: SecurityGateLog[] = [
+  { id: 'SEC-101', timestamp: new Date(Date.now() - 3600000 * 5).toISOString(), time: '08:15 WIB', type: 'Kendaraan Masuk', entity: 'Truk Box Isuzu W 8229 US', driver: 'Ach Taufiq', purpose: 'Muat Karton Box Ekspedisi Bali', status: 'Diizinkan', plateNumber: 'W 8229 US', securityOfficer: 'Regu A (Bripka Joko)' },
+  { id: 'SEC-102', timestamp: new Date(Date.now() - 3600000 * 4).toISOString(), time: '09:30 WIB', type: 'Tamu Rekanan', entity: 'PT Surya Paperindo Utama', driver: 'Ir. Hendra (Vendor Kertas)', purpose: 'Inspeksi Bahan Baku Roll', status: 'Selesai', securityOfficer: 'Regu A (Slamet Riyadi)' },
+  { id: 'SEC-103', timestamp: new Date(Date.now() - 3600000 * 2).toISOString(), time: '11:00 WIB', type: 'Kendaraan Keluar', entity: 'Pick Up Box P 8125 VC [N1]', initialCode: 'N1', driver: 'Zainul Agustiar', purpose: 'Pengiriman Retail Banyuwangi', status: 'Gate-Out', plateNumber: 'P 8125 VC', securityOfficer: 'Regu A (Slamet Riyadi)' },
+  { id: 'SEC-104', timestamp: new Date(Date.now() - 1800000).toISOString(), time: '13:45 WIB', type: 'Patroli Satpam', entity: 'Area Gudang DC & Tangki Solar', driver: 'Regu A (Bripka Joko dkk)', purpose: 'Pengecekan Segel Gerbang & APAR', status: 'Aman', securityOfficer: 'Regu A (Bripka Joko)' }
+];
 
 export interface SupabaseConfig {
   url: string;
   anonKey: string;
   isConnected: boolean;
+}
+
+export interface OfflineScheduleStatusUpdate {
+  id: string;
+  scheduleId: string;
+  trackingNumber: string;
+  status: Schedule['status'];
+  extraNotes?: string;
+  podData?: {
+    podPhotoUrl?: string;
+    podReceiverName?: string;
+    podConditionNote?: string;
+    podPhotoTimestamp?: string;
+  };
+  timestamp: string;
 }
 
 /**
@@ -356,6 +384,8 @@ class LogisticsStore {
   private sparePartUsages: SparePartUsage[] = [];
   private fuelLogs: FuelLog[] = [];
   private imageRecords: ImageRecord[] = [];
+  private scannedDocuments: ScannedDocumentLog[] = [];
+  private securityLogs: SecurityGateLog[] = [];
   private autoSyncStatus: AutoSyncStatus = {
     isSyncing: false,
     lastSyncTime: null,
@@ -368,8 +398,20 @@ class LogisticsStore {
   private listeners: Array<() => void> = [];
   private notificationListeners: Array<(notif: any) => void> = [];
   private middlewares: StoreMiddleware[] = [];
+  private offlineScheduleQueue: OfflineScheduleStatusUpdate[] = [];
 
   constructor() {
+    this.offlineScheduleQueue = this.loadFromStorage('akk_offline_sync_queue', []);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        this.syncOfflineQueueToSupabase();
+      });
+      setInterval(() => {
+        if (navigator.onLine && this.offlineScheduleQueue.length > 0) {
+          this.syncOfflineQueueToSupabase();
+        }
+      }, 30000);
+    }
     this.fleets = this.loadFromStorage(STORAGE_KEYS.FLEETS, INITIAL_FLEETS);
     this.crews = this.loadFromStorage(STORAGE_KEYS.CREWS, INITIAL_CREWS);
     this.stores = this.loadFromStorage(STORAGE_KEYS.STORES, INITIAL_STORES);
@@ -377,6 +419,65 @@ class LogisticsStore {
     this.devices = this.loadFromStorage(STORAGE_KEYS.DEVICES, INITIAL_TRACKSOLID_DEVICES);
     this.users = this.loadFromStorage(STORAGE_KEYS.USERS, INITIAL_PROFILES);
     this.currentUser = this.loadFromStorage(STORAGE_KEYS.CURRENT_USER, INITIAL_PROFILES[0]);
+
+    // Ensure super admin user has generic name 'Super Admin' and email 'bayun791@gmail.com'
+    const superAdminUser = this.users.find(u => u.role === 'super_admin' || u.id === 'usr-001');
+    if (superAdminUser) {
+      if (superAdminUser.fullName !== 'Super Admin' || superAdminUser.email !== 'bayun791@gmail.com') {
+        superAdminUser.fullName = 'Super Admin';
+        superAdminUser.email = 'bayun791@gmail.com';
+        this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+      }
+    }
+
+    // Ensure operasional and security accounts exist
+    let usersUpdated = false;
+    if (!this.users.some(u => u.role === 'operasional')) {
+      this.users.push({
+        id: 'usr-operasional',
+        email: 'operasional@gmail.com',
+        password: 'password123',
+        fullName: 'Hadi Purnomo',
+        role: 'operasional',
+        department: 'Operasional',
+        phone: '0812-3456-7801',
+        status: 'approved',
+        createdAt: '2026-01-10T08:00:00Z',
+        approvedAt: '2026-01-10T08:05:00Z',
+        approvedBy: 'Super Admin',
+        notes: 'Operational Lead & Manajer Operasional'
+      });
+      usersUpdated = true;
+    }
+    if (!this.users.some(u => u.role === 'security')) {
+      this.users.push({
+        id: 'usr-security',
+        email: 'security.dc@gmail.com',
+        password: 'password123',
+        fullName: 'Slamet Riyadi (Security)',
+        role: 'security',
+        department: 'Keamanan / Pos Satpam',
+        phone: '0813-9876-5432',
+        status: 'approved',
+        createdAt: '2026-01-10T08:00:00Z',
+        approvedAt: '2026-01-10T08:05:00Z',
+        approvedBy: 'Super Admin',
+        notes: 'Petugas Pos Keamanan Gerbang DC 24 Jam'
+      });
+      usersUpdated = true;
+    }
+    if (usersUpdated) {
+      this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+    }
+
+    if (this.currentUser && (this.currentUser.email.includes('@akk-packaging.co.id') || this.currentUser.fullName.includes(', S.') || this.currentUser.role === 'super_admin')) {
+      this.currentUser = {
+        ...this.currentUser,
+        email: this.currentUser.role === 'super_admin' ? 'bayun791@gmail.com' : this.currentUser.email.replace('@akk-packaging.co.id', '@gmail.com'),
+        fullName: this.currentUser.role === 'super_admin' ? 'Super Admin' : this.currentUser.fullName.replace(/,\s*S\.[A-Za-z.]+/g, '').trim()
+      };
+      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    }
     this.crewHistory = this.loadFromStorage(STORAGE_KEYS.CREW_HISTORY, INITIAL_CREW_HISTORY);
     this.areaApprovals = this.loadFromStorage(STORAGE_KEYS.AREA_APPROVALS, INITIAL_AREA_APPROVALS);
     this.areaThreshold = this.loadFromStorage(STORAGE_KEYS.AREA_THRESHOLD, 3);
@@ -390,6 +491,8 @@ class LogisticsStore {
     this.sparePartUsages = this.loadFromStorage(STORAGE_KEYS.SPARE_PART_USAGES, INITIAL_SPARE_PART_USAGES);
     this.fuelLogs = this.loadFromStorage(STORAGE_KEYS.FUEL_LOGS, INITIAL_FUEL_LOGS);
     this.imageRecords = this.loadFromStorage(STORAGE_KEYS.IMAGES, []);
+    this.scannedDocuments = this.loadFromStorage(STORAGE_KEYS.SCANNED_DOCUMENTS, INITIAL_SCANNED_DOCUMENTS);
+    this.securityLogs = this.loadFromStorage(STORAGE_KEYS.SECURITY_LOGS, INITIAL_SECURITY_LOGS);
     this.systemActivities = this.loadFromStorage('akk_system_activities_v1', []);
     const defaultSupabaseUrl = 'https://pfysnacxaixfnyvixmmh.supabase.co';
     const defaultSupabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmeXNuYWN4YWl4Zm55dml4bW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMjE5NTksImV4cCI6MjEwNjc5Nzk1OX0.EDGipSEnsKVaOPW0kysT7X7YeCmpoj-whr2hIl9vYJE';
@@ -430,96 +533,115 @@ class LogisticsStore {
       }
     }
 
-    // Auto-migrate schedules: Ensure every schedule's destination is a Delivery Area Name (Area Kirim), not a retail store/customer
-    let updatedScheduleAreas = false;
-    this.schedules = (this.schedules || []).map(sch => {
-      const areaName = resolveScheduleAreaName(sch);
-      const isBali = sch.isInterIsland || areaName.toUpperCase().includes('BALI') || areaName.toUpperCase().includes('DENPASAR') || areaName.toUpperCase().includes('SINGARAJA') || areaName.toUpperCase().includes('NEGARA');
-
-      const areaStore: RetailStore = {
-        id: sch.storeId && !sch.storeId.startsWith('str-fix-') ? sch.storeId : `area-${areaName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-        storeCode: `AREA-${areaName.substring(0, 4).toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
-        storeName: areaName, // ALWAYS NAMA AREA KIRIM
-        island: isBali ? 'Bali & Nusa Tenggara' : 'Jawa',
-        province: isBali ? 'Bali' : 'Jawa Timur',
-        city: isBali ? 'Denpasar' : (areaName.toUpperCase().includes('JEMBER') ? 'Jember' : (areaName.toUpperCase().includes('SITUBONDO') ? 'Situbondo' : (areaName.toUpperCase().includes('BONDOWOSO') ? 'Bondowoso' : 'Banyuwangi'))),
-        address: `Area Pengiriman Distribusi ${areaName}`,
-        latitude: isBali ? -8.6705 : -8.219,
-        longitude: isBali ? 115.2126 : 114.369,
-        contactPerson: 'PIC Distribusi Area',
-        phone: '-',
-        deliveryWindow: '08:00 - 17:00',
-        storeCategory: 'Distribution Hub'
-      };
-
-      if (sch.areaName !== areaName || !sch.store || sch.store.storeName !== areaName) {
-        updatedScheduleAreas = true;
-        return {
-          ...sch,
-          areaName,
-          store: areaStore
-        };
-      }
-      return sch;
-    });
-
-    if (updatedScheduleAreas) {
-      this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
-      console.log(`[Store Sanitizer] Migrated all schedules to use Delivery Area names (Area Kirim).`);
-    }
-
-    // Self-heal January 2026 schedules if corrupted by old syncs with duplicate trips on day 5 (> 8)
-    const jan2026Trips = (this.schedules || []).filter(s => s.departureDate && s.departureDate.startsWith('2026-01-05'));
-    if (jan2026Trips.length > 8) {
-      console.log(`[Store Sanitizer] Detected ${jan2026Trips.length} trips on 2026-01-05 (expected 8). Re-aligning with official Google Sheet 6-day schedule.`);
-      this.schedules = (this.schedules || []).filter(s => !s.departureDate || !s.departureDate.startsWith('2026-01-'));
-      this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('akk_admin_schedule_cache_2026_0');
-        localStorage.removeItem('akk_admin_schedule_weeks_cache');
-      }
-    }
-
     // Auto-migrate user profiles if the user name was changed
     let updatedUsers = false;
+
+    // Ensure Muhammad Syaiful Bahri exists as active spv_logistik
+    const hasBahri = this.users.some(u => 
+      u.email.toLowerCase() === 'bahri@gmail.com' || 
+      u.fullName.toLowerCase().includes('syaiful bahri')
+    );
+    if (!hasBahri) {
+      this.users.unshift({
+        id: 'usr-bahri',
+        email: 'bahri@gmail.com',
+        fullName: 'MUHAMMAD SYAIFUL BAHRI',
+        role: 'spv_logistik',
+        department: 'Operasional Distribusi Packaging Banyuwangi',
+        phone: '085257997040',
+        status: 'approved',
+        createdAt: '2026-10-08T08:00:00Z',
+        approvedAt: '2026-10-08T08:05:00Z',
+        approvedBy: 'MUHAMMAD SYAIFUL BAHRI',
+        notes: 'Diverifikasi langsung oleh Super Admin'
+      });
+      updatedUsers = true;
+    }
+    this.runDataMigrations();
+  }
+
+  private runDataMigrations() {
     this.users = this.users.map(u => {
       let updated = false;
       let newName = u.fullName;
       let newApprovedBy = u.approvedBy;
-      if (u.fullName === 'Ir. Hendra Gunawan') {
-        newName = 'Bayu Novianto Dimas Permana, S.Si';
+      let newRole = u.role;
+
+      if (u.role === 'super_admin' || u.id === 'usr-001' || u.fullName.includes('Bayu Novianto') || u.fullName === 'Ir. Hendra Gunawan') {
+        newName = 'Super Admin';
+        newApprovedBy = 'Super Admin';
         updated = true;
       }
-      if (u.approvedBy === 'Ir. Hendra Gunawan') {
-        newApprovedBy = 'Bayu Novianto Dimas Permana, S.Si';
+      if (u.approvedBy && (u.approvedBy.includes('Bayu Novianto') || u.approvedBy === 'Ir. Hendra Gunawan')) {
+        newApprovedBy = 'Super Admin';
         updated = true;
       }
+      // Re-assign Dewi Anggraini to sales_admin if previously set as spv_logistik
+      if (u.fullName.toLowerCase().includes('dewi anggraini') && u.role === 'spv_logistik') {
+        newRole = 'sales_admin';
+        updated = true;
+      }
+      // Ensure Muhammad Syaiful Bahri is approved spv_logistik
+      if (u.fullName.toLowerCase().includes('syaiful bahri')) {
+        if (u.role !== 'spv_logistik' || u.status !== 'approved') {
+          newRole = 'spv_logistik';
+          updated = true;
+        }
+      }
+
       if (updated) {
-        updatedUsers = true;
-        return { ...u, fullName: newName, approvedBy: newApprovedBy };
+        return { ...u, fullName: newName, approvedBy: newApprovedBy, role: newRole };
       }
       return u;
     });
-    if (updatedUsers) {
-      this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+    
+    // Note: updatedUsers logic needs to be handled if used
+    this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+
+    if (this.currentUser) {
+      let currentUserChanged = false;
+      let curName = this.currentUser.fullName;
+      let curApprovedBy = this.currentUser.approvedBy;
+      let curRole = this.currentUser.role;
+
+      if (this.currentUser.role === 'super_admin' || this.currentUser.id === 'usr-001' || curName.includes('Bayu Novianto') || curName === 'Ir. Hendra Gunawan') {
+        curName = 'Super Admin';
+        curApprovedBy = 'Super Admin';
+        currentUserChanged = true;
+      }
+      if (curApprovedBy && (curApprovedBy.includes('Bayu Novianto') || curApprovedBy === 'Ir. Hendra Gunawan')) {
+        curApprovedBy = 'Super Admin';
+        currentUserChanged = true;
+      }
+      if (curName.toLowerCase().includes('dewi anggraini') && curRole === 'spv_logistik') {
+        curRole = 'sales_admin';
+        currentUserChanged = true;
+      }
+
+      if (currentUserChanged) {
+        this.currentUser = {
+          ...this.currentUser,
+          fullName: curName,
+          approvedBy: curApprovedBy,
+          role: curRole
+        };
+        this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+      }
     }
 
-    if (this.currentUser && (this.currentUser.fullName === 'Ir. Hendra Gunawan' || this.currentUser.approvedBy === 'Ir. Hendra Gunawan')) {
-      this.currentUser = {
-        ...this.currentUser,
-        fullName: this.currentUser.fullName === 'Ir. Hendra Gunawan' ? 'Bayu Novianto Dimas Permana, S.Si' : this.currentUser.fullName,
-        approvedBy: this.currentUser.approvedBy === 'Ir. Hendra Gunawan' ? 'Bayu Novianto Dimas Permana, S.Si' : this.currentUser.approvedBy
-      };
-      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
-    }
-
-    // Ensure all fleets have initialCode (inisial mobil) and tax/stnk dates
     let updatedFleets = false;
 
-    // Merge any missing fleets from INITIAL_FLEETS into this.fleets
+    // Purge any fleet whose plate number ends with 'AKK'
+    const hasAkkFleets = this.fleets.some(f => (f.plateNumber || '').trim().toUpperCase().endsWith('AKK'));
+    if (hasAkkFleets) {
+      this.fleets = this.fleets.filter(f => !(f.plateNumber || '').trim().toUpperCase().endsWith('AKK'));
+      updatedFleets = true;
+    }
+
+    // Merge any missing fleets
     INITIAL_FLEETS.forEach(initF => {
       const exists = this.fleets.some(f => f.id === initF.id || f.plateNumber === initF.plateNumber);
-      if (!exists) {
+      if (!exists && !(initF.plateNumber || '').toUpperCase().endsWith('AKK')) {
         this.fleets.push({ ...initF });
         updatedFleets = true;
       }
@@ -538,6 +660,8 @@ class LogisticsStore {
           initialCode: 'N1 / NP1',
           brand: 'Mitsubishi L300',
           engineCc: '2477 CC',
+          boxCapacityM3: 5.5,
+          boxDimensions: '2.4 x 1.6 x 1.4 m',
           year: 2004,
           gpsImei: '',
           lastMaintenance: '2026-12-23',
@@ -556,6 +680,8 @@ class LogisticsStore {
           initialCode: 'A3 / NP3',
           brand: 'Traga',
           engineCc: '2499 CC',
+          boxCapacityM3: 6.2,
+          boxDimensions: '2.8 x 1.6 x 1.4 m',
           year: 2021,
           gpsImei: '',
           lastMaintenance: '2027-02-05',
@@ -574,6 +700,8 @@ class LogisticsStore {
           initialCode: 'N3 / NS1',
           brand: 'Mitsubishi Canter',
           engineCc: '3908 CC',
+          boxCapacityM3: 9.0,
+          boxDimensions: '3.1 x 1.7 x 1.7 m',
           year: 2008,
           gpsImei: '',
           lastMaintenance: '2027-01-29',
@@ -592,6 +720,8 @@ class LogisticsStore {
           initialCode: 'N4 / NS2',
           brand: 'Mitsubishi Canter',
           engineCc: '3298 CC',
+          boxCapacityM3: 9.0,
+          boxDimensions: '3.1 x 1.7 x 1.7 m',
           year: 2005,
           gpsImei: '',
           lastMaintenance: '2026-11-27',
@@ -610,6 +740,8 @@ class LogisticsStore {
           initialCode: 'N5 / NS3',
           brand: 'Mitsubishi Canter',
           engineCc: '3908 CC',
+          boxCapacityM3: 9.0,
+          boxDimensions: '3.1 x 1.7 x 1.7 m',
           year: 2008,
           gpsImei: '',
           lastMaintenance: '2026-08-11',
@@ -628,6 +760,8 @@ class LogisticsStore {
           initialCode: 'N20 / NL1',
           brand: 'Hino',
           engineCc: '4009 CC',
+          boxCapacityM3: 14.0,
+          boxDimensions: '4.2 x 1.8 x 1.8 m',
           year: 2013,
           gpsImei: '',
           lastMaintenance: '2026-12-01',
@@ -656,13 +790,40 @@ class LogisticsStore {
         changed = true;
         stnkExpiryDate = '2028-11-20';
       }
+      let boxCapacityM3 = f.boxCapacityM3;
+      let boxDimensions = f.boxDimensions;
+      if (!boxCapacityM3) {
+        changed = true;
+        const matchingInit = INITIAL_FLEETS.find(initF => initF.id === f.id || initF.plateNumber === f.plateNumber);
+        if (matchingInit && matchingInit.boxCapacityM3) {
+          boxCapacityM3 = matchingInit.boxCapacityM3;
+          boxDimensions = matchingInit.boxDimensions;
+        } else if (f.vehicleType === 'Pick Up Box') {
+          boxCapacityM3 = (f.brand || '').toLowerCase().includes('traga') ? 6.2 : 5.5;
+          boxDimensions = (f.brand || '').toLowerCase().includes('traga') ? '2.8 x 1.6 x 1.4 m' : '2.4 x 1.6 x 1.4 m';
+        } else if (f.vehicleType === 'Engkel Long') {
+          boxCapacityM3 = 14.0;
+          boxDimensions = '4.2 x 1.8 x 1.8 m';
+        } else if (f.vehicleType === 'Engkel STD') {
+          boxCapacityM3 = 9.0;
+          boxDimensions = '3.1 x 1.7 x 1.7 m';
+        } else if (f.vehicleType === 'Double STD') {
+          boxCapacityM3 = (f.brand || '').toLowerCase().includes('isuzu') ? 18.0 : 17.5;
+          boxDimensions = (f.brand || '').toLowerCase().includes('isuzu') ? '4.4 x 2.0 x 2.0 m' : '4.3 x 2.0 x 2.0 m';
+        } else {
+          boxCapacityM3 = 10.0;
+          boxDimensions = '3.5 x 1.8 x 1.8 m';
+        }
+      }
       if (changed) {
         updatedFleets = true;
         return {
           ...f,
           initialCode,
           taxDueDate,
-          stnkExpiryDate
+          stnkExpiryDate,
+          boxCapacityM3,
+          boxDimensions
         };
       }
       return f;
@@ -828,6 +989,33 @@ class LogisticsStore {
 
     // Register built-in Middleware: Automated write to backend / Google Sheets / Image Storage / Activity Audit
     this.registerDefaultMiddlewares();
+  }
+
+  /**
+   * RBAC Middleware Guard: Ensures users with 'driver' or 'crew_helper' roles cannot access or execute operational or administrative tasks outside of 'Portal Driver Mobile'.
+   */
+  public verifyDriverAccess(actionCategory: string): void {
+    const user = this.getCurrentUser();
+    if (user && (user.role === 'driver' || user.role === 'crew_helper')) {
+      const allowedActions = [
+        'update_schedule_status',
+        'upload_pod',
+        'driver_report',
+        'checkin',
+        'vehicle_checklist',
+        'sign_waybill',
+        'get_schedules',
+        'get_fleets',
+        'get_crews',
+        'updateScheduleStatus',
+        'uploadPod',
+        'getSchedules',
+        'getStores'
+      ];
+      if (!allowedActions.includes(actionCategory)) {
+        throw new Error(`Akses Ditolak [RBAC Middleware]: Peran '${user.role}' (${user.fullName}) tidak diizinkan mengakses fungsi admin/operasional '${actionCategory}'. Akses dibatasi khusus Portal Driver Mobile.`);
+      }
+    }
   }
 
   /**
@@ -1177,8 +1365,8 @@ class LogisticsStore {
       let sanitizedData = data;
       if (Array.isArray(data)) {
         if (key === STORAGE_KEYS.SCHEDULES) {
-          // Strip duplicated heavy sub-objects before stringify to reduce payload from ~1.8MB to ~30KB
-          sanitizedData = data.slice(0, 100).map((sch: any) => {
+          // Strip duplicated heavy sub-objects before stringify while preserving full dataset (up to 5,000 items)
+          sanitizedData = data.slice(0, 5000).map((sch: any) => {
             if (!sch || typeof sch !== 'object') return sch;
             const { store, fleet, crew, crewHelper, ...compact } = sch;
             return compact;
@@ -1221,7 +1409,15 @@ class LogisticsStore {
   }
 
   private notify() {
-    this.listeners.forEach(l => l());
+    queueMicrotask(() => {
+      this.listeners.forEach(l => {
+        try {
+          l();
+        } catch (err) {
+          console.error('[Store] listener error:', err);
+        }
+      });
+    });
   }
 
   public subscribe(listener: () => void): () => void {
@@ -1243,12 +1439,127 @@ class LogisticsStore {
   }
 
   // Getters
+  public getSecurityLogs(): SecurityGateLog[] {
+    return [...this.securityLogs];
+  }
+
+  public addSecurityLog(logData: Omit<SecurityGateLog, 'id' | 'timestamp'>): SecurityGateLog {
+    const newLog: SecurityGateLog = {
+      ...logData,
+      id: `SEC-${Math.floor(100 + Math.random() * 900)}`,
+      timestamp: new Date().toISOString()
+    };
+    this.securityLogs = [newLog, ...this.securityLogs].slice(0, 100);
+    this.saveToStorage(STORAGE_KEYS.SECURITY_LOGS, this.securityLogs);
+    this.notify();
+    return newLog;
+  }
+
+  public recordGateOut(
+    scheduleId: string | undefined,
+    plateNumber: string,
+    driverName: string,
+    destination: string,
+    initialCode?: string
+  ): SecurityGateLog {
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
+    const fleetInitial = initialCode || (this.fleets.find(f => f.plateNumber.replace(/\s+/g, '') === (plateNumber || '').replace(/\s+/g, ''))?.initialCode);
+    const initialText = fleetInitial ? ` [${fleetInitial}]` : '';
+
+    if (scheduleId) {
+      const sch = this.schedules.find(s => s.id === scheduleId);
+      if (sch && (sch.status === 'scheduled' || sch.status === 'picked_up')) {
+        sch.status = 'in_transit';
+        this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+      }
+    }
+
+    const newLog = this.addSecurityLog({
+      time: timeStr,
+      type: 'Kendaraan Keluar',
+      entity: `${plateNumber}${initialText}`,
+      initialCode: fleetInitial,
+      driver: driverName || 'Driver AKK',
+      purpose: `Pengiriman ke ${destination || 'Area Distribusi'} (Gate-Out)`,
+      status: 'Gate-Out',
+      scheduleId,
+      plateNumber,
+      securityOfficer: 'Pos Satpam Gerbang DC'
+    });
+
+    this.emitNotification(
+      'schedule',
+      'Kendaraan Keluar (Gate-Out)',
+      `Armada ${plateNumber}${initialText} (${driverName}) resmi dicatat Gate-Out oleh Security.`,
+      false
+    );
+    return newLog;
+  }
+
+  public recordGateIn(
+    scheduleId: string | undefined,
+    plateNumber: string,
+    driverName: string,
+    notes?: string,
+    initialCode?: string
+  ): SecurityGateLog {
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
+    const fleetInitial = initialCode || (this.fleets.find(f => f.plateNumber.replace(/\s+/g, '') === (plateNumber || '').replace(/\s+/g, ''))?.initialCode);
+    const initialText = fleetInitial ? ` [${fleetInitial}]` : '';
+
+    if (scheduleId) {
+      const sch = this.schedules.find(s => s.id === scheduleId);
+      if (sch) {
+        sch.actualArrival = `${now.toISOString().split('T')[0]} ${timeStr}`;
+        sch.status = 'delivered';
+        this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+      }
+    }
+
+    const newLog = this.addSecurityLog({
+      time: timeStr,
+      type: 'Kendaraan Masuk',
+      entity: `${plateNumber}${initialText}`,
+      initialCode: fleetInitial,
+      driver: driverName || 'Driver AKK',
+      purpose: notes || 'Armada Tiba Kembali di Gudang DC Banyuwangi',
+      status: 'Tiba di Gudang',
+      scheduleId,
+      plateNumber,
+      notes,
+      securityOfficer: 'Pos Satpam Gerbang DC'
+    });
+
+    this.emitNotification(
+      'delivery',
+      'Armada Tiba di Gudang',
+      `Armada ${plateNumber}${initialText} (${driverName}) telah tiba di gudang dan berhasil dicatat di sistem database Security.`,
+      false
+    );
+    return newLog;
+  }
+
   public getFleets(): Fleet[] {
     return [...this.fleets];
   }
 
+  public setFleets(fleets: Fleet[]): void {
+    const validFleets = fleets.filter(f => !(f.plateNumber || '').trim().toUpperCase().endsWith('AKK'));
+    this.fleets = validFleets;
+    this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+    this.notify();
+  }
+
   public getCrews(): Crew[] {
     return [...this.crews];
+  }
+
+  public setCrews(crews: Crew[]): void {
+    this.crews = crews;
+    this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    this.notify();
   }
 
   public getStores(): RetailStore[] {
@@ -1295,15 +1606,72 @@ class LogisticsStore {
   public updateDevices(updatedDevices: TracksolidDevice[]) {
     this.devices = [...updatedDevices];
     this.saveToStorage(STORAGE_KEYS.DEVICES, this.devices);
+    this.notify();
   }
 
   public resetDevices() {
     this.devices = [...INITIAL_TRACKSOLID_DEVICES];
     this.saveToStorage(STORAGE_KEYS.DEVICES, this.devices);
+    this.notify();
   }
 
   public getCurrentUser(): UserProfile {
     return this.currentUser;
+  }
+
+  /**
+   * Returns the official name of the Koordinator Logistik / Dispatcher.
+   * Dynamically integrates with user management roles and names:
+   * 1. If currently logged-in user is an active spv_logistik, returns their name.
+   * 2. Finds approved users with role 'spv_logistik'.
+   *    If Muhammad Syaiful Bahri is an approved spv_logistik, uses his name (including any edited name).
+   *    Otherwise, uses the first approved user holding the 'spv_logistik' role.
+   * 3. Fallback to any user matching Syaiful Bahri or official default.
+   */
+  public getLogisticsCoordinator(): string {
+    if (this.currentUser && this.currentUser.role === 'spv_logistik' && this.currentUser.status === 'approved') {
+      return this.currentUser.fullName;
+    }
+    const approvedDispatchers = this.users.filter(u => u.role === 'spv_logistik' && u.status === 'approved');
+    const bahriDispatcher = approvedDispatchers.find(u => u.fullName.toLowerCase().includes('syaiful bahri'));
+    if (bahriDispatcher) {
+      return bahriDispatcher.fullName;
+    }
+    if (approvedDispatchers.length > 0) {
+      return approvedDispatchers[0].fullName;
+    }
+    const anyBahri = this.users.find(u => u.fullName.toLowerCase().includes('syaiful bahri'));
+    if (anyBahri) {
+      return anyBahri.fullName;
+    }
+    return 'Muhammad Syaiful Bahri';
+  }
+
+  /**
+   * Returns the official name and title for the Super Admin / Manager Operasional.
+   * Dynamically integrates with user management roles and names:
+   * 1. If currently logged-in user is an approved super_admin, returns their name.
+   * 2. Finds approved users with role 'super_admin' and returns their name.
+   * 3. Fallback to official default.
+   */
+  public getSuperAdminOrManager(): { name: string; title: string } {
+    if (this.currentUser && this.currentUser.role === 'super_admin' && this.currentUser.status === 'approved') {
+      return {
+        name: this.currentUser.fullName,
+        title: 'Super Admin / Manager'
+      };
+    }
+    const admin = this.users.find(u => u.role === 'super_admin' && u.status === 'approved');
+    if (admin) {
+      return {
+        name: admin.fullName,
+        title: 'Super Admin / Manager'
+      };
+    }
+    return {
+      name: 'Super Admin',
+      title: 'Super Admin / Manager'
+    };
   }
 
   public getSupabaseConfig(): SupabaseConfig {
@@ -1568,6 +1936,7 @@ class LogisticsStore {
   }
 
   public approveUser(userId: string, notes?: string) {
+    this.verifyDriverAccess('user_management');
     const approverName = this.currentUser.fullName || 'Manager Operasional AKK';
     this.users = this.users.map(u => {
       if (u.id === userId) {
@@ -1599,6 +1968,7 @@ class LogisticsStore {
   }
 
   public rejectUser(userId: string, reason?: string) {
+    this.verifyDriverAccess('user_management');
     this.users = this.users.map(u => {
       if (u.id === userId) {
         return {
@@ -1624,13 +1994,78 @@ class LogisticsStore {
   }
 
   public updateUserRole(userId: string, role: UserRole) {
-    this.users = this.users.map(u => u.id === userId ? { ...u, role } : u);
+    this.updateUserProfile(userId, { role });
+  }
+
+  public updateUserProfile(userId: string, data: Partial<UserProfile>): boolean {
+    this.verifyDriverAccess('user_management');
+    const userIndex = this.users.findIndex(u => u.id === userId);
+    if (userIndex === -1) return false;
+
+    const existing = this.users[userIndex];
+    const oldName = existing.fullName;
+
+    const updatedUser: UserProfile = {
+      ...existing,
+      ...data,
+      id: userId
+    };
+
+    this.users[userIndex] = updatedUser;
+
     if (this.currentUser.id === userId) {
-      this.currentUser = { ...this.currentUser, role };
+      this.currentUser = { ...this.currentUser, ...data, id: userId };
       this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
     }
+
+    // Direct synchronization: If name or phone changed, sync with crew pool & active schedules
+    if (data.fullName && data.fullName !== oldName) {
+      const newName = data.fullName;
+      let crewsUpdated = false;
+      this.crews = this.crews.map(c => {
+        if (c.name.toLowerCase() === oldName.toLowerCase() || (c.phone && existing.phone && c.phone === existing.phone)) {
+          crewsUpdated = true;
+          return { ...c, name: newName, phone: data.phone || c.phone };
+        }
+        return c;
+      });
+      if (crewsUpdated) {
+        this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+      }
+
+      let schUpdated = false;
+      this.schedules = this.schedules.map(s => {
+        let changed = false;
+        let newCrew = s.crew;
+        let newHelper = s.crewHelper;
+        let newHelper2 = s.crewHelper2;
+
+        if (s.crew && s.crew.name.toLowerCase() === oldName.toLowerCase()) {
+          newCrew = { ...s.crew, name: newName };
+          changed = true;
+        }
+        if (s.crewHelper && s.crewHelper.name.toLowerCase() === oldName.toLowerCase()) {
+          newHelper = { ...s.crewHelper, name: newName };
+          changed = true;
+        }
+        if (s.crewHelper2 && s.crewHelper2.name.toLowerCase() === oldName.toLowerCase()) {
+          newHelper2 = { ...s.crewHelper2, name: newName };
+          changed = true;
+        }
+        if (changed) {
+          schUpdated = true;
+          return { ...s, crew: newCrew, crewHelper: newHelper, crewHelper2: newHelper2 };
+        }
+        return s;
+      });
+      if (schUpdated) {
+        this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+      }
+    }
+
     this.saveToStorage(STORAGE_KEYS.USERS, this.users);
     this.notify();
+    return true;
   }
 
   public deleteUser(userId: string) {
@@ -1661,18 +2096,34 @@ class LogisticsStore {
 
     this.users = [newUser, ...this.users];
     this.saveToStorage(STORAGE_KEYS.USERS, this.users);
-
-    // Auto login as this new registered user
-    this.currentUser = newUser;
-    this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
     this.notify();
 
     return newUser;
   }
 
-  public loginUser(email: string): UserProfile | null {
-    const existing = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  public loginUser(identifier: string, password?: string): UserProfile | null {
+    const cleanId = (identifier || '').trim().toLowerCase();
+    const cleanPass = (password || '').trim();
+    let existing = this.users.find(u => (u.email && u.email.trim().toLowerCase() === cleanId) || (u.id === cleanId));
+    
+    // Fallback: If admin or bayun791 is entered
+    if (!existing && (cleanId === 'admin' || cleanId === 'bayun791@gmail.com' || cleanId === 'bayun791' || cleanId.includes('bayun791'))) {
+      existing = this.users.find(u => u.role === 'super_admin' || u.id === 'usr-001');
+      if (existing) {
+        existing.email = 'admin';
+        existing.password = 'admin123';
+        existing.fullName = 'Super Admin';
+        this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+      }
+    }
+
     if (existing) {
+      if (existing.role === 'super_admin') {
+        if (password && cleanPass !== 'admin123' && cleanPass !== 'admin791') {
+          return null;
+        }
+      }
+
       this.currentUser = existing;
       this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
       this.notify();
@@ -1688,6 +2139,12 @@ class LogisticsStore {
       this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
       this.notify();
     }
+  }
+
+  public setCurrentUser(user: UserProfile) {
+    this.currentUser = user;
+    this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    this.notify();
   }
 
   public logoutUser() {
@@ -1970,21 +2427,78 @@ class LogisticsStore {
     this.notify();
   }
 
-  public updateScheduleStatus(id: string, status: Schedule['status']) {
+  public updateScheduleStatus(
+    id: string,
+    status: Schedule['status'],
+    extraNotes?: string,
+    podData?: {
+      podPhotoUrl?: string;
+      podReceiverName?: string;
+      podConditionNote?: string;
+      podPhotoTimestamp?: string;
+    }
+  ) {
     let deliveredSchedule: Schedule | null = null;
     let targetSch: Schedule | null = null;
 
     this.schedules = this.schedules.map(sch => {
       if (sch.id === id) {
         targetSch = sch;
-        const updated = { ...sch, status };
+        const updatedNotes = extraNotes 
+          ? (sch.notes ? `${sch.notes} [${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}: ${extraNotes}]` : extraNotes)
+          : sch.notes;
+        const updated: Schedule = {
+          ...sch,
+          status,
+          notes: updatedNotes,
+          ...(podData?.podPhotoUrl ? { podPhotoUrl: podData.podPhotoUrl } : {}),
+          ...(podData?.podPhotoTimestamp ? { podPhotoTimestamp: podData.podPhotoTimestamp } : {}),
+          ...(podData?.podReceiverName ? { podReceiverName: podData.podReceiverName } : {}),
+          ...(podData?.podConditionNote ? { podConditionNote: podData.podConditionNote } : {}),
+        };
         if (status === 'delivered') {
           updated.actualArrival = new Date().toISOString();
           deliveredSchedule = updated;
           this.logActivity('Update Status', 'Pengiriman', `Status ${sch.trackingNumber} menjadi delivered`);
+          if (podData?.podPhotoUrl) {
+            this.attachImageToSchedule(sch.id, podData.podPhotoUrl, 'proof_of_delivery', `POD Penerima: ${podData.podReceiverName || 'PIC'}`);
+          }
           // Release fleet and crew
           this.updateFleetStatus(sch.fleetId, 'available', 0);
           this.updateCrewStatus(sch.crewId, 'available');
+          const fltDelivered = this.fleets.find(f => f.id === sch.fleetId);
+          const crwDelivered = this.crews.find(c => c.id === sch.crewId);
+          const alreadyGateIn = this.securityLogs.some(l => l.scheduleId === sch.id && l.status === 'Tiba di Gudang');
+          if (!alreadyGateIn) {
+            this.recordGateIn(
+              sch.id,
+              fltDelivered?.plateNumber || sch.trackingNumber,
+              crwDelivered?.name || 'Driver AKK',
+              'Armada Selesai Pengantaran & Tiba Kembali di Gudang DC',
+              fltDelivered?.initialCode
+            );
+          }
+        } else if (status === 'picked_up' || status === 'in_transit') {
+          this.updateFleetStatus(sch.fleetId, 'on-duty');
+          this.updateCrewStatus(sch.crewId, 'on-duty');
+          this.logActivity('Update Status Driver', 'Pengiriman', `Status ${sch.trackingNumber} menjadi ${status}`);
+          if (status === 'in_transit') {
+            const flt = this.fleets.find(f => f.id === sch.fleetId);
+            const crw = this.crews.find(c => c.id === sch.crewId);
+            const store = this.stores.find(s => s.id === sch.storeId);
+            const alreadyLogged = this.securityLogs.some(l => l.scheduleId === sch.id && l.status === 'Gate-Out');
+            if (!alreadyLogged) {
+              this.recordGateOut(
+                sch.id,
+                flt?.plateNumber || sch.trackingNumber,
+                crw?.name || 'Driver AKK',
+                sch.areaName || store?.storeName || 'Area Distribusi',
+                flt?.initialCode
+              );
+            }
+          }
+        } else if (status === 'delayed') {
+          this.logActivity('Kendala Pengiriman Driver', 'Pengiriman', `Status ${sch.trackingNumber} delayed: ${extraNotes || 'Tertunda'}`);
         }
         return updated;
       }
@@ -1994,10 +2508,11 @@ class LogisticsStore {
 
     if (targetSch) {
       const statusTexts: Record<ShipmentStatus, string> = {
-        scheduled: 'Menunggu Muat',
+        scheduled: 'Terjadwal',
+        picked_up: 'Telah Dimuat (Picked Up)',
         in_transit: 'Dalam Perjalanan (Transit)',
         delivered: 'Telah Sampai (Delivered)',
-        delayed: 'Mengalami Keterlambatan'
+        delayed: 'Mengalami Keterlambatan (Delayed)'
       };
       this.emitNotification(
         'delivery',
@@ -2005,6 +2520,29 @@ class LogisticsStore {
         `Armada ${(targetSch as Schedule).trackingNumber} kini berstatus: ${statusTexts[status] || status}.`,
         status === 'delayed'
       );
+
+      const sch = targetSch as Schedule;
+      const updateItem: OfflineScheduleStatusUpdate = {
+        id: 'off-upd-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        scheduleId: sch.id,
+        trackingNumber: sch.trackingNumber,
+        status,
+        extraNotes,
+        podData,
+        timestamp: new Date().toISOString()
+      };
+
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        this.syncSingleUpdateToSupabase(updateItem).then(success => {
+          if (!success) {
+            this.pushToOfflineQueue(updateItem);
+          }
+        }).catch(() => {
+          this.pushToOfflineQueue(updateItem);
+        });
+      } else {
+        this.pushToOfflineQueue(updateItem);
+      }
     }
 
     // Record delivery in crew history
@@ -2036,6 +2574,8 @@ class LogisticsStore {
           status: 'delivered',
           onTimeStatus: 'Tepat Waktu',
           ratingReceived: 5.0,
+          podPhotoUrl: sch.podPhotoUrl,
+          podReceiverName: sch.podReceiverName,
           areaTripSequenceNumber: areaStats.tripCount + 1,
           requiresAreaApproval: (areaStats.tripCount + 1) >= this.areaThreshold,
           areaApprovalStatus: (areaStats.tripCount + 1) >= this.areaThreshold ? 'approved' : 'not_required'
@@ -2061,13 +2601,116 @@ class LogisticsStore {
     this.notify();
   }
 
+  private pushToOfflineQueue(item: OfflineScheduleStatusUpdate) {
+    const existingIdx = this.offlineScheduleQueue.findIndex(q => q.scheduleId === item.scheduleId);
+    if (existingIdx >= 0) {
+      this.offlineScheduleQueue[existingIdx] = item;
+    } else {
+      this.offlineScheduleQueue.push(item);
+    }
+    this.saveToStorage('akk_offline_sync_queue', this.offlineScheduleQueue);
+  }
+
+  private async syncSingleUpdateToSupabase(item: OfflineScheduleStatusUpdate): Promise<boolean> {
+    try {
+      const { getSupabaseClient } = await import('./supabaseService');
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      const updatePayload: Record<string, any> = {
+        status: item.status,
+      };
+      if (item.status === 'delivered') {
+        updatePayload.actual_arrival = new Date().toISOString();
+      }
+      if (item.extraNotes && item.extraNotes.trim()) {
+        updatePayload.notes = item.extraNotes.trim();
+      } else if (item.podData?.podReceiverName) {
+        updatePayload.notes = `Diterima: ${item.podData.podReceiverName} (${item.podData.podConditionNote || 'Kondisi Baik'})${item.podData.podPhotoUrl ? ' [Bukti Foto POD OK]' : ''}`;
+      }
+
+      const { error: updErr } = await supabase
+        .from('schedules')
+        .update(updatePayload)
+        .eq('tracking_number', item.trackingNumber);
+
+      if (!updErr) return true;
+
+      const { error: idErr } = await supabase
+        .from('schedules')
+        .update(updatePayload)
+        .eq('id', item.scheduleId);
+
+      return !idErr;
+    } catch {
+      return false;
+    }
+  }
+
+  public async syncOfflineQueueToSupabase(): Promise<{ synced: number; remaining: number }> {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { synced: 0, remaining: this.offlineScheduleQueue.length };
+    }
+    if (this.offlineScheduleQueue.length === 0) {
+      return { synced: 0, remaining: 0 };
+    }
+
+    let syncedCount = 0;
+    const remaining: OfflineScheduleStatusUpdate[] = [];
+
+    for (const item of [...this.offlineScheduleQueue]) {
+      const success = await this.syncSingleUpdateToSupabase(item);
+      if (success) {
+        syncedCount++;
+      } else {
+        remaining.push(item);
+      }
+    }
+
+    this.offlineScheduleQueue = remaining;
+    this.saveToStorage('akk_offline_sync_queue', this.offlineScheduleQueue);
+
+    if (syncedCount > 0) {
+      console.info(`[LogisticsStore] Successfully synced ${syncedCount} offline delivery updates to Supabase database.`);
+      this.emitNotification(
+        'delivery',
+        'Sinkronisasi Offline Berhasil',
+        `${syncedCount} pembaruan status pengiriman yang tertunda saat offline kini telah disinkronkan ke Supabase.`
+      );
+    }
+
+    return { synced: syncedCount, remaining: this.offlineScheduleQueue.length };
+  }
+
+  public getOfflineScheduleQueue(): OfflineScheduleStatusUpdate[] {
+    return [...this.offlineScheduleQueue];
+  }
+
   public addFleet(fleet: Omit<Fleet, 'id'>): Fleet {
+    // Prevent adding any fleet with plate ending in AKK
+    if ((fleet.plateNumber || '').trim().toUpperCase().endsWith('AKK')) {
+      console.warn(`[Store] Dilarang menambahkan armada berakhiran AKK (${fleet.plateNumber}). Menggunakan armada resmi.`);
+      const fallback = this.fleets.find(f => !(f.plateNumber || '').toUpperCase().endsWith('AKK')) || INITIAL_FLEETS[0];
+      return fallback;
+    }
+
     const newFleet: Fleet = {
       ...fleet,
       id: 'flt-' + Math.random().toString(36).substring(2, 8)
     };
     this.fleets = [...this.fleets, newFleet];
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+
+    // Asynchronous backend integration with Supabase
+    import('./supabaseService').then(({ createFleetInSupabase }) => {
+      createFleetInSupabase(newFleet).then(res => {
+        if (res.data?.id && res.data.id !== newFleet.id) {
+          newFleet.id = res.data.id;
+          this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+          this.notify();
+        }
+      }).catch(err => console.warn('[Supabase Store Auto-Create Fleet Note]', err));
+    }).catch(() => {});
 
     this.dispatchMiddleware({
       entityType: 'fleet',
@@ -2079,6 +2722,38 @@ class LogisticsStore {
 
     this.notify();
     return newFleet;
+  }
+
+  public purgeAkkFleets(): { removedCount: number; remainingCount: number } {
+    const originalCount = this.fleets.length;
+    this.fleets = this.fleets.filter(f => !(f.plateNumber || '').trim().toUpperCase().endsWith('AKK'));
+    
+    // Ensure all 12 initial fleets are present
+    INITIAL_FLEETS.forEach(initF => {
+      const exists = this.fleets.some(f => f.id === initF.id || f.plateNumber === initF.plateNumber);
+      if (!exists && !(initF.plateNumber || '').toUpperCase().endsWith('AKK')) {
+        this.fleets.push({ ...initF });
+      }
+    });
+    
+    this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
+
+    // Re-map any schedules pointing to deleted AKK fleets
+    this.schedules = this.schedules.map(sch => {
+      const currentF = this.fleets.find(f => f.id === sch.fleetId);
+      if (!currentF || (currentF.plateNumber || '').trim().toUpperCase().endsWith('AKK')) {
+        const fallback = this.fleets.find(f => !(f.plateNumber || '').toUpperCase().endsWith('AKK')) || this.fleets[0];
+        return { ...sch, fleetId: fallback.id, fleet: fallback };
+      }
+      return sch;
+    });
+    this.saveToStorage(STORAGE_KEYS.SCHEDULES, this.schedules);
+    this.notify();
+
+    return {
+      removedCount: Math.max(0, originalCount - this.fleets.length),
+      remainingCount: this.fleets.length
+    };
   }
 
   public updateFleetStatus(id: string, status: Fleet['status'], tonnage?: number) {
@@ -2094,6 +2769,11 @@ class LogisticsStore {
     });
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
 
+    // Asynchronous backend integration with Supabase
+    import('./supabaseService').then(({ updateFleetInSupabase }) => {
+      updateFleetInSupabase(id, { status, currentTonnage: tonnage }).catch(err => console.warn('[Supabase Fleet Status Sync Note]', err));
+    }).catch(() => {});
+
     this.dispatchMiddleware({
       entityType: 'fleet',
       action: 'status_change',
@@ -2106,6 +2786,8 @@ class LogisticsStore {
   }
 
   public updateFleet(id: string, updatedFields: Partial<Fleet>) {
+    this.verifyDriverAccess('updateFleet');
+
     let updatedFleet: Fleet | null = null;
     this.fleets = this.fleets.map(f => {
       if (f.id === id) {
@@ -2117,6 +2799,11 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
 
     if (updatedFleet) {
+      // Asynchronous backend integration with Supabase
+      import('./supabaseService').then(({ updateFleetInSupabase }) => {
+        updateFleetInSupabase(id, updatedFields).catch(err => console.warn('[Supabase Fleet Update Sync Note]', err));
+      }).catch(() => {});
+
       this.dispatchMiddleware({
         entityType: 'fleet',
         action: 'update',
@@ -2135,6 +2822,12 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.FLEETS, this.fleets);
     if (deletedFleet) {
       this.logActivity('Hapus Armada', deletedFleet.plateNumber, `Menghapus armada ${deletedFleet.plateNumber} (${deletedFleet.vehicleType})`);
+      
+      // Asynchronous backend integration with Supabase
+      import('./supabaseService').then(({ deleteFleetInSupabase }) => {
+        deleteFleetInSupabase(id, deletedFleet.plateNumber).catch(err => console.warn('[Supabase Fleet Delete Sync Note]', err));
+      }).catch(() => {});
+
       this.dispatchMiddleware({
         entityType: 'fleet',
         action: 'delete',
@@ -2157,6 +2850,17 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     this.logActivity('Tambah Kru', newCrew.name, `Menambahkan kru baru ${newCrew.name} sebagai ${newCrew.role}`);
     
+    // Asynchronous backend integration with Supabase
+    import('./supabaseService').then(({ createCrewInSupabase }) => {
+      createCrewInSupabase(newCrew).then(res => {
+        if (res.data?.id && res.data.id !== newCrew.id) {
+          newCrew.id = res.data.id;
+          this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+          this.notify();
+        }
+      }).catch(err => console.warn('[Supabase Crew Create Sync Note]', err));
+    }).catch(() => {});
+
     this.dispatchMiddleware({
       entityType: 'crew',
       action: 'create',
@@ -2173,6 +2877,11 @@ class LogisticsStore {
     this.crews = this.crews.map(c => (c.id === id ? { ...c, status } : c));
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     
+    // Asynchronous backend integration with Supabase
+    import('./supabaseService').then(({ updateCrewInSupabase }) => {
+      updateCrewInSupabase(id, { status }).catch(err => console.warn('[Supabase Crew Status Sync Note]', err));
+    }).catch(() => {});
+
     this.dispatchMiddleware({
       entityType: 'crew',
       action: 'status_change',
@@ -2196,6 +2905,11 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
 
     if (updatedCrew) {
+      // Asynchronous backend integration with Supabase
+      import('./supabaseService').then(({ updateCrewInSupabase }) => {
+        updateCrewInSupabase(id, updatedFields).catch(err => console.warn('[Supabase Crew Update Sync Note]', err));
+      }).catch(() => {});
+
       this.dispatchMiddleware({
         entityType: 'crew',
         action: 'update',
@@ -2214,6 +2928,12 @@ class LogisticsStore {
     this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
     if (deletedCrew) {
       this.logActivity('Hapus Kru', deletedCrew.name, `Menghapus kru ${deletedCrew.name} (${deletedCrew.role}) dari sistem armada`);
+      
+      // Asynchronous backend integration with Supabase
+      import('./supabaseService').then(({ deleteCrewInSupabase }) => {
+        deleteCrewInSupabase(id, deletedCrew.name).catch(err => console.warn('[Supabase Crew Delete Sync Note]', err));
+      }).catch(() => {});
+
       this.dispatchMiddleware({
         entityType: 'crew',
         action: 'delete',
@@ -2223,6 +2943,11 @@ class LogisticsStore {
       });
     }
     this.notify();
+  }
+
+  public async syncFleetsAndCrewsWithSupabase(): Promise<{ success: boolean; fleetsCount: number; crewsCount: number; message: string }> {
+    const { syncFleetsAndCrewsWithSupabase } = await import('./supabaseService');
+    return syncFleetsAndCrewsWithSupabase();
   }
 
   public addStore(store: Omit<RetailStore, 'id'>): RetailStore {
@@ -2323,6 +3048,8 @@ class LogisticsStore {
   }
 
   public addSalesOrder(order: Omit<SalesOrder, 'id'>): SalesOrder {
+    this.verifyDriverAccess('addSalesOrder');
+
     const newOrder: SalesOrder = {
       ...order,
       id: 'so-' + Math.random().toString(36).substring(2, 8)
@@ -3170,6 +3897,42 @@ class LogisticsStore {
         recommendedPressurePsi
       };
     });
+  }
+
+  // ==========================================
+  // DOCUMENT SCANNING & SEARCHABLE LOGS
+  // ==========================================
+  public getScannedDocuments(): ScannedDocumentLog[] {
+    return [...this.scannedDocuments];
+  }
+
+  public addScannedDocument(doc: Omit<ScannedDocumentLog, 'id' | 'timestamp'>): ScannedDocumentLog {
+    const newDoc: ScannedDocumentLog = {
+      ...doc,
+      id: `DOC-SCAN-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      timestamp: new Date().toISOString()
+    };
+    this.scannedDocuments = [newDoc, ...this.scannedDocuments];
+    this.saveToStorage(STORAGE_KEYS.SCANNED_DOCUMENTS, this.scannedDocuments);
+    this.logActivity(
+      'Scan Dokumen',
+      newDoc.documentNumber,
+      `Dokumen digital dipindai & diarsipkan: ${newDoc.documentTypeLabel} (${newDoc.documentNumber})`
+    );
+    this.notify();
+    return newDoc;
+  }
+
+  public updateScannedDocument(id: string, updates: Partial<ScannedDocumentLog>): void {
+    this.scannedDocuments = this.scannedDocuments.map(d => d.id === id ? { ...d, ...updates } : d);
+    this.saveToStorage(STORAGE_KEYS.SCANNED_DOCUMENTS, this.scannedDocuments);
+    this.notify();
+  }
+
+  public deleteScannedDocument(id: string): void {
+    this.scannedDocuments = this.scannedDocuments.filter(d => d.id !== id);
+    this.saveToStorage(STORAGE_KEYS.SCANNED_DOCUMENTS, this.scannedDocuments);
+    this.notify();
   }
 }
 

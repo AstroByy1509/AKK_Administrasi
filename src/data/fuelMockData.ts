@@ -55,7 +55,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 4.8,
     notes: 'Kecepatan stabil tol 70-80 km/jam, AC normal, muatan full kardus karton',
     createdAt: '2026-09-18T16:30:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-002',
@@ -83,7 +83,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 7.2,
     notes: 'Jalur Gumitir agak menanjak, penggunaan gigi rendah wajar',
     createdAt: '2026-09-17T18:15:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-003',
@@ -111,7 +111,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 3.2,
     notes: 'BBM Dexlite performa mesin responsif, gas buang bersih, rasio sangat hemat',
     createdAt: '2026-09-16T15:10:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-004',
@@ -167,7 +167,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 8.5,
     notes: 'Kondisi macet di Lawang dan Singosari sekitar 1.5 jam',
     createdAt: '2026-09-15T19:20:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-006',
@@ -195,7 +195,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 6.0,
     notes: 'Konsumsi sangat boros (4.67 KM/L). Ditemukan asap hitam tebal dan tarikan berat, armada langsung ditarik ke bengkel untuk servis nozzle injector.',
     createdAt: '2026-09-11T20:00:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-007',
@@ -223,7 +223,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 5.2,
     notes: 'Kondisi cuaca hujan di Pasuruan, laju stabil',
     createdAt: '2026-09-12T17:00:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-008',
@@ -279,7 +279,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 3.8,
     notes: 'Performa mesin prima setelah penggantian oli Shell Rimula R4X',
     createdAt: '2026-09-07T16:15:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-010',
@@ -307,7 +307,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 0.9,
     notes: 'Kondisi kendaraan sangat baik',
     createdAt: '2026-09-06T15:00:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-011',
@@ -335,7 +335,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 8.8,
     notes: 'Muatan berat mendekati batas tonase, suhu udara sangat terik dan AC maksimal',
     createdAt: '2026-09-04T18:45:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-012',
@@ -365,7 +365,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 4.6,
     notes: 'Perjalanan malam hari minim hambatan macet',
     createdAt: '2026-09-02T06:30:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-013',
@@ -395,7 +395,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 7.0,
     notes: 'Kondisi jalur lancar, akselerasi halus',
     createdAt: '2026-09-19T17:00:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-014',
@@ -425,7 +425,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 3.4,
     notes: 'Konsumsi bahan bakar stabil dan sangat efisien',
     createdAt: '2026-09-19T18:30:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-015',
@@ -515,7 +515,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 7.8,
     notes: 'Perjalanan lancar tanpa kendala',
     createdAt: '2026-09-20T21:00:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-018',
@@ -545,7 +545,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 4.5,
     notes: 'Konsumsi normal rute lintas Gumitir',
     createdAt: '2026-09-18T19:30:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-019',
@@ -605,7 +605,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 7.5,
     notes: 'Muatan bahan baku pabrik lancar',
     createdAt: '2026-09-21T18:40:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-021',
@@ -635,7 +635,7 @@ export const INITIAL_FUEL_LOGS: FuelLog[] = [
     cargoLoadTon: 8.0,
     notes: 'Jalan tanjakan terpantau baik',
     createdAt: '2026-09-20T17:20:00Z',
-    verifiedBy: 'Dewi Anggraini, S.Log'
+    verifiedBy: 'Muhammad Syaiful Bahri'
   },
   {
     id: 'fuel-022',

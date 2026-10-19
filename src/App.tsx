@@ -22,9 +22,15 @@ import { ThemeSwitcher } from './components/ThemeSwitcher';
 import { SystemActivityLog } from './components/SystemActivityLog';
 import { DepartmentDashboard } from './components/DepartmentDashboard';
 import { MarketingDashboard } from './components/MarketingDashboard';
+import { DriverMobileView } from './components/DriverMobileView';
+import { DriverReportsManagement } from './components/DriverReportsManagement';
+import { AnalyticsReportingModule } from './components/AnalyticsReportingModule';
+import { E2ETesterModule } from './components/E2ETesterModule';
+import { NetworkStatusBanner } from './components/NetworkStatusBanner';
+import { RealtimeShipmentListener } from './components/RealtimeShipmentListener';
 import { RetailStore, UserProfile } from './types';
 import { logisticsStore } from './services/store';
-import { ShieldCheck, Clock, AlertTriangle, LogIn, ChevronLeft, ChevronRight, Bell } from 'lucide-react';
+import { ShieldCheck, Clock, AlertTriangle, LogIn, ChevronLeft, ChevronRight, Bell, Smartphone } from 'lucide-react';
 import { useToast } from './context/ToastContext';
 
 const LiveClockBadge: React.FC = () => {
@@ -43,17 +49,31 @@ const LiveClockBadge: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-slate-300 font-mono text-xs shadow-inner">
-      <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-      <span>{time}</span>
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl neu-pressed text-cyan-300 font-mono text-xs tabular-nums shadow-[0_0_10px_rgba(0,242,254,0.15)]">
+      <Clock className="w-3.5 h-3.5 text-cyan-400 shrink-0 drop-shadow-[0_0_6px_rgba(0,242,254,0.8)]" />
+      <span className="tracking-wide">{time}</span>
     </div>
   );
 };
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<NavTab>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const tabParam = searchParams.get('tab');
+      if (tabParam) return tabParam as NavTab;
+      if (window.location.hash) {
+        const hash = window.location.hash.replace('#', '');
+        if (hash) return hash as NavTab;
+      }
+      if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.includes('AKKDriverMobile')) {
+        return 'driver_portal';
+      }
+    } catch {}
+    return 'dashboard';
+  });
   const [preselectedStore, setPreselectedStore] = useState<RetailStore | null>(null);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(true);
   const [authDefaultTab, setAuthDefaultTab] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<UserProfile>(logisticsStore.getCurrentUser());
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
@@ -82,14 +102,38 @@ export default function App() {
   };
 
   useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get('tab') === 'driver_portal' || (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.includes('AKKDriverMobile'))) {
+        if (currentUser.role !== 'driver') {
+          logisticsStore.setCurrentRole('driver');
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
     return logisticsStore.subscribe(() => {
-      setCurrentUser(logisticsStore.getCurrentUser());
+      const user = logisticsStore.getCurrentUser();
+      setCurrentUser(user);
+      if (user.role === 'driver' && currentTab === 'dashboard') {
+        setCurrentTab('driver_portal');
+      }
     });
+  }, [currentTab]);
+
+  useEffect(() => {
+    if (currentUser.role === 'driver' && currentTab === 'dashboard') {
+      setCurrentTab('driver_portal');
+    }
   }, []);
 
   const getTabTitle = (tab: NavTab): string => {
     switch (tab) {
       case 'dashboard': return 'Dashboard Eksekutif (Rangkuman Operasional & Penjualan)';
+      case 'driver_portal': return 'Portal Driver Mobile (Tugas Pengiriman & Status Supir)';
+      case 'driver_reports': return 'Laporan & Kendala Kiriman Kru (Driver & Helper)';
+      case 'analytics_reports': return 'Laporan Analitik Performa Armada & Kru';
       case 'operational_dashboard': return 'Dashboard Logistik & Operasional';
       case 'schedules': return 'Manajemen Jadwal Pengiriman & Muat';
       case 'fleets': return 'Manajemen Armada & Kru Supir';
@@ -110,7 +154,12 @@ export default function App() {
       case 'sales_kpi_fines': return 'Data Akumulasi Denda Checker';
       case 'sales_kpi_nusantara': return 'Persentase Kiriman Nusantara';
       case 'sales_kpi_omset': return 'Omset Admin Penjualan';
-      case 'hr_dashboard': return 'Dashboard Departemen HR';
+      case 'hr_dashboard': return 'Dashboard Departemen HR (Presensi & Master Staff)';
+      case 'ga_security': return 'General Affair (GA): Security & Pos Keamanan Pabrik';
+      case 'ga_hk': return 'General Affair (GA): Housekeeping (HK) & Kebersihan 5R';
+      case 'ga_aset': return 'General Affair (GA): Manajemen Aset & Fasilitas Pabrik';
+      case 'training_videos': return 'Training & Development: Video Pembelajaran & SOP';
+      case 'training_karyawan': return 'Training & Development: Pelatihan & Sertifikasi Kru';
       case 'finance_dashboard': return 'Dashboard Departemen Finance & Tax';
       case 'warehouse_dashboard': return 'Dashboard Departemen Gudang';
       case 'purchasing_dashboard': return 'Dashboard Departemen Adm. Pembelian';
@@ -122,6 +171,7 @@ export default function App() {
       case 'customer_map': return 'Pemetaan Toko Retail & Mitra';
       case 'users': return 'Approval & Manajemen Pengguna';
       case 'architecture': return 'Arsitektur Database Supabase SQL';
+      case 'e2e_testing': return 'Pusat Pengujian E2E & Simulasi Akun Pengguna';
       default: return 'Sistem Operasional AKK';
     }
   };
@@ -138,6 +188,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex antialiased selection:bg-amber-500 selection:text-slate-950">
+      {/* Network Connectivity & Offline Real-Time Tracking Warning Banner */}
+      <NetworkStatusBanner />
+      <RealtimeShipmentListener />
+
       {/* Sidebar Navigation - Left Rail (Fixed on Desktop, Drawer on Mobile) */}
       <Sidebar
         currentTab={currentTab}
@@ -150,31 +204,31 @@ export default function App() {
       {/* Main Content Area with offset for Sidebar */}
       <div className={`flex-1 flex flex-col min-h-screen w-full transition-all duration-300 ${isSidebarMinimized ? 'lg:pl-20' : 'lg:pl-72'}`}>
         {/* Desktop Top Header Bar with Theme Switcher & Operational Title */}
-        <header className="hidden lg:flex sticky top-0 z-20 h-16 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-6 lg:px-8 items-center justify-between shadow-xs">
+        <header className="hidden lg:flex sticky top-0 z-20 h-16 bg-slate-900/95 backdrop-blur-md border-b border-slate-800/80 px-6 lg:px-8 items-center justify-between neu-flat">
           <div className="flex items-center gap-3.5">
             {/* Quick Toggle Button for Sidebar Minimization */}
             <button
               onClick={toggleSidebar}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-slate-300 hover:text-amber-400 transition cursor-pointer shadow-xs active:scale-95 flex items-center justify-center"
+              className="p-2 rounded-xl neu-button text-slate-300 hover:text-amber-400 transition cursor-pointer active:scale-95 flex items-center justify-center"
               title={isSidebarMinimized ? "Perlebar Sidebar (Tampilkan Nama & Menu Lengkap)" : "Minimalkan Sidebar (Hanya Tampilkan Logo Saja)"}
               aria-label="Toggle Sidebar Size"
             >
-              {isSidebarMinimized ? <ChevronRight className="w-4 h-4 text-amber-400" /> : <ChevronLeft className="w-4 h-4 text-slate-400" />}
+              {isSidebarMinimized ? <ChevronRight className="w-4 h-4 text-cyan-400 drop-shadow-[0_0_6px_rgba(0,242,254,0.8)]" /> : <ChevronLeft className="w-4 h-4 text-slate-400" />}
             </button>
 
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 shrink-0 shadow-inner">
-              <ShieldCheck className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl neu-flat-sm flex items-center justify-center text-amber-400 shrink-0 shadow-[0_0_12px_rgba(245,158,11,0.3)]">
+              <ShieldCheck className="w-5 h-5 drop-shadow-[0_0_6px_rgba(245,158,11,0.7)]" />
             </div>
             <div>
               <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 flex items-center gap-1.5">
                 <span>PT ANUGRAH KEMASAN KREATIF</span>
                 <span className="text-slate-600">&bull;</span>
-                <span className="text-amber-500 font-semibold">BANYUWANGI HUB</span>
+                <span className="text-amber-400 font-semibold neon-text-amber">BANYUWANGI HUB</span>
               </div>
               <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-2">
                 <span>{getTabTitle(currentTab)}</span>
-                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-400/50 shadow-[0_0_10px_rgba(16,185,129,0.35)] font-mono font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse"></span>
                   Live System
                 </span>
               </h1>
@@ -182,8 +236,22 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Quick Driver Mobile Mode Switcher */}
+            <button
+              onClick={() => setCurrentTab(currentTab === 'driver_portal' ? 'dashboard' : 'driver_portal')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer active:scale-95 ${
+                currentTab === 'driver_portal'
+                  ? 'neu-pressed text-emerald-300 border border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.4)] font-black'
+                  : 'neu-button text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
+              }`}
+              title="Buka Tampilan Khusus Mobile Supir (Driver Portal)"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400 drop-shadow-[0_0_4px_rgba(16,185,129,0.7)]" />
+              <span>{currentTab === 'driver_portal' ? 'Portal Admin' : 'Mode Driver Mobile'}</span>
+            </button>
+
             {/* Prominent 2-Choice Theme Switcher: Warna Cerah vs Warna Gelap */}
-            <div className="flex items-center gap-2 bg-slate-950/70 p-1 rounded-xl border border-slate-800/80 shadow-inner">
+            <div className="flex items-center gap-2 neu-pressed p-1 rounded-2xl">
               <span className="text-[11px] font-bold text-slate-400 pl-2 hidden xl:inline">Tampilan Web:</span>
               <ThemeSwitcher variant="segmented" />
             </div>
@@ -194,12 +262,12 @@ export default function App() {
             {/* Notification Bell Button */}
             <button
               onClick={() => setIsDrawerOpen(true)}
-              className="relative p-2 rounded-xl bg-slate-950/70 hover:bg-slate-800 border border-slate-800/80 hover:border-slate-700 text-slate-300 hover:text-amber-400 transition cursor-pointer shadow-inner flex items-center justify-center active:scale-95"
+              className="relative p-2 rounded-xl neu-button text-slate-300 hover:text-amber-400 hover:shadow-[0_0_12px_rgba(245,158,11,0.4)] transition cursor-pointer flex items-center justify-center active:scale-95"
               title="Pusat Notifikasi Admin & Simulasi Logistik"
             >
               <Bell className="w-4.5 h-4.5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-black text-slate-950 ring-2 ring-slate-900 animate-pulse">
+                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-black text-slate-950 ring-2 ring-slate-900 shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-pulse">
                   {unreadCount}
                 </span>
               )}
@@ -208,13 +276,15 @@ export default function App() {
             {/* Quick Profile Pill */}
             <button
               onClick={() => handleOpenAuth('login')}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 hover:bg-slate-800 border border-slate-800/80 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition cursor-pointer shadow-inner"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl neu-button text-xs text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
               title="Ganti Akun atau Kelola Sesi"
             >
-              <div className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] flex items-center justify-center">
+              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-amber-400 to-cyan-500 text-slate-950 font-black text-[10px] flex items-center justify-center shadow-[0_0_6px_rgba(245,158,11,0.7)]">
                 {currentUser.fullName ? currentUser.fullName.charAt(0).toUpperCase() : 'U'}
               </div>
-              <span className="font-semibold max-w-[100px] truncate">{currentUser.fullName}</span>
+              <span className="font-semibold max-w-[100px] truncate">
+                {currentUser.role === 'super_admin' ? 'Super Admin' : currentUser.fullName}
+              </span>
             </button>
           </div>
         </header>
@@ -258,6 +328,14 @@ export default function App() {
             <DashboardOverview onNavigate={(tab) => setCurrentTab(tab as NavTab)} />
           )}
 
+          {currentTab === 'driver_reports' && (
+            <DriverReportsManagement />
+          )}
+
+          {currentTab === 'analytics_reports' && (
+            <AnalyticsReportingModule />
+          )}
+
           {currentTab === 'schedules' && (
             <ScheduleManagement
               preselectedStore={preselectedStore}
@@ -286,7 +364,7 @@ export default function App() {
           )}
 
           {currentTab === 'users' && (
-            <UserManagement />
+            <UserManagement onNavigateToE2E={() => setCurrentTab('e2e_testing')} />
           )}
 
           {currentTab === 'tracking_eval' && (
@@ -355,8 +433,17 @@ export default function App() {
             <SystemActivityLog />
           )}
 
-          {currentTab === 'hr_dashboard' && (
-            <DepartmentDashboard dashboardType="hr" />
+          {(currentTab === 'hr_dashboard' || currentTab === 'ga_security' || currentTab === 'ga_hk' || currentTab === 'ga_aset' || currentTab === 'training_videos' || currentTab === 'training_karyawan') && (
+            <DepartmentDashboard 
+              dashboardType="hr" 
+              initialHrTab={
+                currentTab === 'ga_security' ? 'ga_security' :
+                currentTab === 'ga_hk' ? 'ga_hk' :
+                currentTab === 'ga_aset' ? 'ga_aset' :
+                currentTab === 'training_videos' ? 'training_videos' :
+                currentTab === 'training_karyawan' ? 'training_karyawan' : 'hr_core'
+              } 
+            />
           )}
           {currentTab === 'finance_dashboard' && (
             <DepartmentDashboard dashboardType="finance" />
@@ -378,8 +465,16 @@ export default function App() {
             <MarketingDashboard activeTab={currentTab} />
           )}
 
+          {currentTab === 'driver_portal' && (
+            <DriverMobileView onBackToPortal={() => setCurrentTab('dashboard')} />
+          )}
+
           {currentTab === 'architecture' && (
             <SupabaseSqlArchitecture />
+          )}
+
+          {currentTab === 'e2e_testing' && (
+            <E2ETesterModule onNavigate={(tab) => setCurrentTab(tab)} />
           )}
         </main>
 

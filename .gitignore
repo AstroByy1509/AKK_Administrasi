@@ -1,6 +1,9 @@
 node_modules/
 build/
 dist/
+dist-portal/
+dist-driver/
+.vercel/
 coverage/
 .DS_Store
 *.log

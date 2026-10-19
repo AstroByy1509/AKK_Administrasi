@@ -667,13 +667,20 @@ export const googleSheetsApiService = {
         // Check if row is an explicit date banner (e.g. "TANGGAL 5 BULAN 1", "SENIN, 05/01/2026", "05 Januari 2026")
         const dateBannerInRow = scanRowForDate(rowData);
         if (dateBannerInRow) {
+          const dVal = driverCol !== -1 ? String(rowData[driverCol] || '').trim() : '';
+          const aVal = areaCol !== -1 ? String(rowData[areaCol] || '').trim() : '';
+          const isPureBanner = (!dVal || dVal === '-' || dVal === '0') && (!aVal || aVal === '-' || aVal === '0');
+
           if (currentBlock.rows.length > 0) {
             dayBlocks.push(currentBlock);
             currentBlock = { rows: [], explicitDate: dateBannerInRow };
           } else {
             currentBlock.explicitDate = dateBannerInRow;
           }
-          continue;
+
+          if (isPureBanner) {
+            continue;
+          }
         }
 
         // Check if row is a black line separator

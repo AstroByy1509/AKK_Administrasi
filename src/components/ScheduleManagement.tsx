@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move, FileSpreadsheet, History, RefreshCw, Zap } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Calendar, Plus, Truck, Store, User, Users, Ship, Clock, CheckCircle2, AlertTriangle, FileText, Search, ChevronRight, ChevronDown, ChevronUp, CalendarDays, X, LayoutList, MapPin, Printer, ShieldAlert, Edit, Trash2, Sparkles, CalendarCheck, Repeat, Layers, Move, FileSpreadsheet, History, RefreshCw, Zap, Download, Loader2, Compass, Navigation } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Schedule, RetailStore, Fleet, Crew, ShipmentStatus, CrewDeliveryHistory } from '../types';
 import { logisticsStore } from '../services/store';
@@ -18,6 +18,9 @@ import { AreaRepetitionWarningModal } from './AreaRepetitionWarningModal';
 import { checkConsecutiveWeekConflict, AreaRepetitionConflict } from '../services/areaRotationValidator';
 import { scheduleImportValidator } from '../services/scheduleImportValidator';
 import { GoogleSheetsAdminScheduleView } from './GoogleSheetsAdminScheduleView';
+import { ScheduleRouteMap } from './ScheduleRouteMap';
+import { downloadScheduleManifestPdf } from '../utils/suratJalanPdfGenerator';
+import { useToast } from '../context/ToastContext';
 
 interface ScheduleManagementProps {
   preselectedStore?: RetailStore | null;
@@ -76,8 +79,70 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({
   const [isRouteOptimizerOpen, setIsRouteOptimizerOpen] = useState(false);
   const [isSmartFillOpen, setIsSmartFillOpen] = useState(false);
   const [autoInitMessage, setAutoInitMessage] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner' | 'google_sheets_all'>('schedules_list');
+  const [activeMainTab, setActiveMainTab] = useState<'schedules_list' | 'weekly_planner' | 'schedule_route_map' | 'google_sheets_all'>('schedules_list');
+  const [selectedRouteScheduleId, setSelectedRouteScheduleId] = useState<string | null>(null);
+
+  const handleViewRouteOnMap = (sch: Schedule) => {
+    setSelectedRouteScheduleId(sch.id);
+    setActiveMainTab('schedule_route_map');
+  };
   const [consecutiveConflict, setConsecutiveConflict] = useState<AreaRepetitionConflict | null>(null);
+  const { addNotification } = useToast();
+  const [isExportingManifestPdf, setIsExportingManifestPdf] = useState(false);
+
+  const handleDownloadManifestPdf = async () => {
+    if (!selectedManifest) return;
+    setIsExportingManifestPdf(true);
+    try {
+      const success = await downloadScheduleManifestPdf(selectedManifest);
+      if (success) {
+        addNotification(
+          'delivery',
+          'PDF Surat Jalan Berhasil Diunduh',
+          `Berkas Surat Jalan Keluar untuk area ${selectedManifest.areaName || selectedManifest.store?.storeName || 'Tujuan'} berhasil diunduh.`
+        );
+      } else {
+        throw new Error('Gagal menghasilkan file PDF');
+      }
+    } catch (err) {
+      console.error('PDF export error:', err);
+      addNotification(
+        'sla_warning',
+        'Gagal Cetak PDF',
+        'Terjadi kendala saat memproses berkas PDF. Silakan coba kembali.'
+      );
+    } finally {
+      setIsExportingManifestPdf(false);
+    }
+  };
+
+  // States for Date Navigation & Grouping (Mencegah scroll ngelos ke bawah)
+  const [selectedSpecificDate, setSelectedSpecificDate] = useState<string>('all');
+  const [viewGroupingMode, setViewGroupingMode] = useState<'grouped_by_date' | 'flat_table'>('grouped_by_date');
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  const toggleDateExpansion = (dateKey: string) => {
+    setExpandedDates(prev => ({
+      ...prev,
+      [dateKey]: prev[dateKey] !== undefined ? !prev[dateKey] : false
+    }));
+  };
+
+  const isDateExpanded = (dateKey: string) => {
+    return expandedDates[dateKey] !== false; // default open
+  };
+
+  const handleExpandAllDates = (keys: string[]) => {
+    const newState: Record<string, boolean> = {};
+    keys.forEach(k => { newState[k] = true; });
+    setExpandedDates(newState);
+  };
+
+  const handleCollapseAllDates = (keys: string[]) => {
+    const newState: Record<string, boolean> = {};
+    keys.forEach(k => { newState[k] = false; });
+    setExpandedDates(newState);
+  };
 
   // Helper to extract day of week from schedule
   const getScheduleDayName = (sch: Schedule): string => {
@@ -594,6 +659,84 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
     logisticsStore.updateScheduleStatus(scheduleId, newStatus);
   };
 
+  // Helper to extract detailed date information from schedule
+  const getScheduleDateDetails = (sch: Schedule) => {
+    const dateStr = sch.departureDate || sch.createdAt;
+    let d = dateStr ? new Date(dateStr) : new Date(2026, 0, 5);
+    if (isNaN(d.getTime())) d = new Date(2026, 0, 5);
+
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const dateKey = `${yyyy}-${mm}-${dd}`;
+
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dayName = days[d.getDay()] || getScheduleDayName(sch);
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const formattedDate = `${dd} ${months[d.getMonth()]} ${yyyy}`;
+    const shortDate = `${dd} ${months[d.getMonth()].substring(0, 3)}`;
+
+    const depTime = sch.departureDate 
+      ? new Date(sch.departureDate).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+      : '07:30';
+    const arrTime = sch.estimatedArrival
+      ? new Date(sch.estimatedArrival).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+      : '17:00';
+
+    return {
+      dateKey,
+      dayName,
+      formattedDate,
+      shortDate,
+      depTime: `${depTime} WIB`,
+      arrTime: `${arrTime} WIB`,
+      rawDate: d
+    };
+  };
+
+  // Unique list of dates present across all schedules with counts
+  const distinctDateList = useMemo(() => {
+    const map = new Map<string, {
+      dateKey: string;
+      dayName: string;
+      formattedDate: string;
+      shortDate: string;
+      totalTrips: number;
+      lokalCount: number;
+      luarKotaCount: number;
+      rawDate: Date;
+    }>();
+
+    schedules.forEach(sch => {
+      const details = getScheduleDateDetails(sch);
+      const isLuar = sch.isInterIsland || 
+        (sch.areaName || '').toUpperCase().includes('BALI') || 
+        (sch.areaName || '').toUpperCase().includes('DENPASAR') || 
+        (sch.areaName || '').toUpperCase().includes('SINGARAJA') || 
+        (sch.areaName || '').toUpperCase().includes('NEGARA');
+
+      const existing = map.get(details.dateKey);
+      if (existing) {
+        existing.totalTrips++;
+        if (isLuar) existing.luarKotaCount++;
+        else existing.lokalCount++;
+      } else {
+        map.set(details.dateKey, {
+          dateKey: details.dateKey,
+          dayName: details.dayName,
+          formattedDate: details.formattedDate,
+          shortDate: details.shortDate,
+          totalTrips: 1,
+          lokalCount: isLuar ? 0 : 1,
+          luarKotaCount: isLuar ? 1 : 0,
+          rawDate: details.rawDate
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.rawDate.getTime() - b.rawDate.getTime());
+  }, [schedules]);
+
   const filteredSchedules = schedules.filter(sch => {
     const matchesStatus = statusFilter === 'all' || sch.status === statusFilter;
     const matchesQuery =
@@ -613,7 +756,15 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
       matchesDay = schDay === selectedDayFilter;
     }
 
-    // Date filter
+    // Specific Date filter
+    if (selectedSpecificDate !== 'all') {
+      const details = getScheduleDateDetails(sch);
+      if (details.dateKey !== selectedSpecificDate) {
+        return false;
+      }
+    }
+
+    // Month & Year Date filter
     let matchesDate = true;
     const dateStr = sch.departureDate || sch.createdAt;
     if (dateStr) {
@@ -633,6 +784,59 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
 
     return matchesStatus && matchesQuery && matchesFleet && matchesDay && matchesDate;
   });
+
+  // Chronologically sorted filtered schedules
+  const sortedFilteredSchedules = useMemo(() => {
+    return [...filteredSchedules].sort((a, b) => {
+      const ta = new Date(a.departureDate || a.createdAt || 0).getTime();
+      const tb = new Date(b.departureDate || b.createdAt || 0).getTime();
+      return ta - tb;
+    });
+  }, [filteredSchedules]);
+
+  // Grouped schedules by date for clean accordion cards
+  const groupedSchedulesByDate = useMemo(() => {
+    const groups: {
+      dateKey: string;
+      dayName: string;
+      formattedDate: string;
+      shortDate: string;
+      trips: Schedule[];
+      lokalCount: number;
+      luarKotaCount: number;
+    }[] = [];
+
+    const map = new Map<string, typeof groups[0]>();
+
+    sortedFilteredSchedules.forEach(sch => {
+      const details = getScheduleDateDetails(sch);
+      const isLuar = sch.isInterIsland || 
+        (sch.areaName || '').toUpperCase().includes('BALI') || 
+        (sch.areaName || '').toUpperCase().includes('DENPASAR') || 
+        (sch.areaName || '').toUpperCase().includes('SINGARAJA') || 
+        (sch.areaName || '').toUpperCase().includes('NEGARA');
+
+      let grp = map.get(details.dateKey);
+      if (!grp) {
+        grp = {
+          dateKey: details.dateKey,
+          dayName: details.dayName,
+          formattedDate: details.formattedDate,
+          shortDate: details.shortDate,
+          trips: [],
+          lokalCount: 0,
+          luarKotaCount: 0
+        };
+        map.set(details.dateKey, grp);
+        groups.push(grp);
+      }
+      grp.trips.push(sch);
+      if (isLuar) grp.luarKotaCount++;
+      else grp.lokalCount++;
+    });
+
+    return groups.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  }, [sortedFilteredSchedules]);
 
   return (
     <div className="space-y-6">
@@ -778,6 +982,21 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             </button>
 
             <button
+              onClick={() => setActiveMainTab('schedule_route_map')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeMainTab === 'schedule_route_map'
+                  ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-md ring-2 ring-cyan-400/40'
+                  : 'text-cyan-300 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Compass className="w-4 h-4 text-cyan-400" />
+              <span>Peta Rute Jadwal (Leaflet)</span>
+              <span className="bg-cyan-500/20 text-cyan-200 border border-cyan-500/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
+                Interactive GIS
+              </span>
+            </button>
+
+            <button
               onClick={() => setActiveMainTab('google_sheets_all')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
                 activeMainTab === 'google_sheets_all'
@@ -798,6 +1017,11 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
               <span className="text-purple-300 font-medium flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                 <span>Geser kartu jadwal untuk rotasi tugas Kru atau Truk</span>
+              </span>
+            ) : activeMainTab === 'schedule_route_map' ? (
+              <span className="text-cyan-300 font-medium flex items-center gap-1">
+                <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Visualisasi Jalur GIS Leaflet: Gudang Pusat DC Banyuwangi &rarr; Toko Retail</span>
               </span>
             ) : activeMainTab === 'google_sheets_all' ? (
               <span className="text-emerald-300 font-medium flex items-center gap-1">
@@ -1015,218 +1239,698 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
             onSelectSchedule={(s) => setSelectedManifest(s)}
           />
 
-      {/* Schedules Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm no-print">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
-              <tr>
-                <th className="p-4 font-semibold">Area Kirim</th>
-                <th className="p-4 font-semibold">Armada, Supir & Helper</th>
-                <th className="p-4 font-semibold">Kategori Jalur & Logistik Kapal</th>
-                <th className="p-4 font-semibold">Berangkat / Tiba</th>
-                <th className="p-4 font-semibold">Status</th>
-                <th className="p-4 font-semibold text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800 text-slate-300">
-              {filteredSchedules.map(sch => {
-                const isOuter = sch.isInterIsland;
-                const dayName = getScheduleDayName(sch);
+      {/* 4. Panel Navigasi & Rincian Tanggal Pengiriman Area (Bebas Scroll / Tidak Ngelos ke Bawah) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 no-print">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center font-bold shadow-xs">
+              <CalendarDays className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-blue-400">
+                  Navigasi Tanggal Area Kirim
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                  Bebas Scroll Panjang
+                </span>
+              </div>
+              <h3 className="text-base font-black text-white mt-0.5">
+                Rincian Jadwal Berdasarkan Tanggal Pengiriman
+              </h3>
+            </div>
+          </div>
 
-                return (
-                  <tr key={sch.id} className="hover:bg-slate-800/40 transition">
-                    <td className="p-4">
-                      <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                        {dayName !== 'Lainnya' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* View Mode Toggle: Grouped vs Flat */}
+            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setViewGroupingMode('grouped_by_date')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                  viewGroupingMode === 'grouped_by_date'
+                    ? 'bg-blue-600 text-white shadow font-bold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Kelompokkan baris pengiriman per tanggal kalender"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Per Tanggal (Rapi)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewGroupingMode('flat_table')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                  viewGroupingMode === 'flat_table'
+                    ? 'bg-blue-600 text-white shadow font-bold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Tampilkan semua baris jadwal dalam satu tabel datar"
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+                <span>Tabel Utuh</span>
+              </button>
+            </div>
+
+            {viewGroupingMode === 'grouped_by_date' && (
+              <div className="flex items-center gap-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleExpandAllDates(distinctDateList.map(d => d.dateKey))}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold transition cursor-pointer"
+                >
+                  Buka Semua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCollapseAllDates(distinctDateList.map(d => d.dateKey))}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold transition cursor-pointer"
+                >
+                  Tutup Semua
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Dropdown Selector Tanggal & Fast Navigation */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="flex-1 relative">
+            <select
+              value={selectedSpecificDate}
+              onChange={(e) => setSelectedSpecificDate(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:border-blue-500 cursor-pointer appearance-none pr-10 shadow-xs"
+            >
+              <option value="all">
+                Semua Tanggal Pengiriman ({distinctDateList.length} Hari Aktif • {schedules.length} Total Ritase)
+              </option>
+              {distinctDateList.map(d => (
+                <option key={d.dateKey} value={d.dateKey}>
+                  📅 {d.dayName}, {d.formattedDate} — ({d.totalTrips} Ritase • {d.lokalCount} Lokal, {d.luarKotaCount} Luar Kota)
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {selectedSpecificDate !== 'all' && (
+            <button
+              type="button"
+              onClick={() => setSelectedSpecificDate('all')}
+              className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap border border-slate-700"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Reset Ke Semua Hari</span>
+            </button>
+          )}
+        </div>
+
+        {/* Horizontal Quick Date Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+          <button
+            type="button"
+            onClick={() => setSelectedSpecificDate('all')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              selectedSpecificDate === 'all'
+                ? 'bg-blue-600 text-white shadow-xs font-black'
+                : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span>Semua Tanggal</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+              selectedSpecificDate === 'all' ? 'bg-blue-900 text-blue-100' : 'bg-slate-800 text-slate-400'
+            }`}>
+              {schedules.length}
+            </span>
+          </button>
+
+          {distinctDateList.map(d => {
+            const isSelected = selectedSpecificDate === d.dateKey;
+            return (
+              <button
+                key={`pill-${d.dateKey}`}
+                type="button"
+                onClick={() => setSelectedSpecificDate(isSelected ? 'all' : d.dateKey)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-400/50'
+                    : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <span>📅 {d.dayName.substring(0, 3)}, {d.shortDate}</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  isSelected ? 'bg-blue-900 text-blue-100' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {d.totalTrips}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Selected Date Summary Notice */}
+        {selectedSpecificDate !== 'all' && (() => {
+          const activeDateObj = distinctDateList.find(d => d.dateKey === selectedSpecificDate);
+          if (!activeDateObj) return null;
+          return (
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs flex items-center justify-between gap-3 animate-fade-in">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>
+                  Menampilkan rincian tanggal pengiriman <strong>{activeDateObj.dayName}, {activeDateObj.formattedDate}</strong> ({filteredSchedules.length} ritase pengiriman). Halaman dibatasi pada hari ini agar tidak perlu scroll ke bawah.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedSpecificDate('all')}
+                className="underline hover:text-white text-xs whitespace-nowrap font-bold cursor-pointer"
+              >
+                Tampilkan Semua Hari
+              </button>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Render Table or Grouped Cards */}
+      {viewGroupingMode === 'grouped_by_date' ? (
+        <div className="space-y-5 no-print">
+          {groupedSchedulesByDate.length === 0 ? (
+            <div className="p-8 text-center bg-slate-900 border border-slate-800 rounded-xl space-y-2">
+              <Calendar className="w-8 h-8 text-slate-500 mx-auto" />
+              <h4 className="text-sm font-bold text-white">Tidak Ada Jadwal Pengiriman yang Cocok</h4>
+              <p className="text-xs text-slate-400">Silakan ubah filter tanggal, status, atau kata kunci pencarian.</p>
+            </div>
+          ) : (
+            groupedSchedulesByDate.map((group) => {
+              const isOpen = isDateExpanded(group.dateKey);
+
+              return (
+                <div
+                  key={`group-card-${group.dateKey}`}
+                  className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm transition hover:border-slate-700"
+                >
+                  {/* Card Date Header */}
+                  <div
+                    onClick={() => toggleDateExpansion(group.dateKey)}
+                    className="p-4 bg-slate-950/80 border-b border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-800/50 transition select-none"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-xs shadow-xs">
+                        {group.dayName.substring(0, 3)}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-sm font-black text-white">
+                            📅 {group.dayName}, {group.formattedDate}
+                          </h4>
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-blue-600 text-white shadow-2xs">
+                            {group.trips.length} Ritase Pengiriman
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                          <span>Distribusi: <strong>{group.lokalCount} Lokal</strong></span>
+                          <span>•</span>
+                          <span><strong>{group.luarKotaCount} Luar Kota (Bali)</strong></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                      <span className="text-xs text-slate-400 font-semibold">
+                        {isOpen ? 'Tutup Rincian' : 'Buka Rincian'}
+                      </span>
+                      <div className="p-1 rounded-lg bg-slate-800 text-slate-300">
+                        {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card Body: Deliveries for this specific date */}
+                  {isOpen && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                          <tr>
+                            <th className="p-4 text-center w-12 font-semibold">#</th>
+                            <th className="p-4 font-semibold">Area Kirim (Tujuan)</th>
+                            <th className="p-4 font-semibold">Rincian Tanggal & Jam</th>
+                            <th className="p-4 font-semibold">Armada Truk</th>
+                            <th className="p-4 font-semibold">Supir & Helper</th>
+                            <th className="p-4 font-semibold">Status</th>
+                            <th className="p-4 font-semibold text-right">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 text-slate-300">
+                          {group.trips.map((sch, idx) => {
+                            const isOuter = sch.isInterIsland;
+                            const dateDetails = getScheduleDateDetails(sch);
+
+                            return (
+                              <tr key={sch.id} className="hover:bg-slate-800/40 transition">
+                                <td className="p-4 text-center font-bold text-slate-500 w-12 border-r border-slate-800/60">
+                                  {idx + 1}
+                                </td>
+
+                                <td className="p-4">
+                                  <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                      {dateDetails.dayName}
+                                    </span>
+                                    {sch.notes?.includes('Susulan') ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                        Susulan
+                                      </span>
+                                    ) : sch.notes?.includes('Grosir') ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                        Grosir
+                                      </span>
+                                    ) : isOuter ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                        🚢 Luar Kota (Bali)
+                                      </span>
+                                    ) : (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                        🚛 Lokal Jatim
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] font-mono text-slate-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                                      {sch.trackingNumber}
+                                    </span>
+                                  </div>
+                                  <div className="font-extrabold text-white text-sm">
+                                    {sch.areaName || sch.store?.storeName || AREA_MAP[sch.storeId] || 'Area Pengiriman'}
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                    <MapPin className="w-3 h-3 text-slate-500" />
+                                    <span>{sch.store?.city || 'Banyuwangi DC'}, {sch.store?.island || 'Jawa Timur'}</span>
+                                  </div>
+                                </td>
+
+                                {/* Kolom Rincian Tanggal & Jam Berangkat / Tiba */}
+                                <td className="p-4">
+                                  <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 space-y-1 w-fit min-w-[155px]">
+                                    <div className="text-[11px] font-black text-amber-300 flex items-center gap-1.5">
+                                      <Calendar className="w-3 h-3 text-amber-400" />
+                                      <span>{dateDetails.formattedDate}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-300 flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-emerald-400" />
+                                      <span>ETD: <strong>{dateDetails.depTime}</strong></span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-blue-400" />
+                                      <span>ETA: <strong>{dateDetails.arrTime}</strong></span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* Kolom Armada Truk */}
+                                <td className="p-4">
+                                  <div className="flex items-center gap-1.5">
+                                    <Truck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                    {sch.fleet?.initialCode && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                        {sch.fleet.initialCode}
+                                      </span>
+                                    )}
+                                    <span className="font-mono font-bold text-white text-xs">{sch.fleet?.plateNumber || '-'}</span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 mt-0.5">
+                                    {sch.fleet?.vehicleType || 'Engkel STD'} {sch.fleet?.brand ? `• ${sch.fleet.brand}` : ''}
+                                  </div>
+                                </td>
+
+                                {/* Kolom Supir & Helper */}
+                                <td className="p-4">
+                                  <div className="flex flex-col gap-1 text-[11px] text-slate-400">
+                                    <div className="flex items-center gap-1.5">
+                                      <User className="w-3 h-3 text-emerald-400 shrink-0" />
+                                      <span>Supir: <strong className="text-slate-100">{sch.crew?.name || '-'}</strong></span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <User className="w-3 h-3 text-blue-400 shrink-0" />
+                                      <span>Helper 1: <strong className="text-slate-300">{sch.crewHelper?.name || '-'}</strong></span>
+                                    </div>
+                                    {sch.crewHelper2 && (
+                                      <div className="flex items-center gap-1.5">
+                                        <User className="w-3 h-3 text-purple-400 shrink-0" />
+                                        <span>Helper 2: <strong className="text-slate-300">{sch.crewHelper2.name}</strong></span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {sch.areaApprovalStatus === 'approved' && (
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                        <ShieldAlert className="w-2.5 h-2.5" />
+                                        <span>Otorisasi Khusus Disetujui</span>
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* Status */}
+                                <td className="p-4">
+                                  <select
+                                    value={sch.status}
+                                    onChange={(e) => handleUpdateStatus(sch.id, e.target.value as ShipmentStatus)}
+                                    className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer border ${
+                                      sch.status === 'in_transit'
+                                        ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                                        : sch.status === 'scheduled'
+                                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                                        : sch.status === 'delivered'
+                                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                        : 'bg-red-500/20 text-red-400 border-red-500/40'
+                                    }`}
+                                  >
+                                    <option value="scheduled">Terjadwal</option>
+                                    <option value="in_transit">Dalam Perjalanan</option>
+                                    <option value="delivered">Terkirim (Selesai)</option>
+                                    <option value="delayed">Tertunda (Delayed)</option>
+                                  </select>
+                                </td>
+
+                                {/* Aksi */}
+                                <td className="p-4 text-right flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      const targetCrewId = prompt('Masukkan ID Kru Target:');
+                                      const reason = prompt('Alasan Swap Shift:');
+                                      if (targetCrewId && reason) {
+                                        logisticsStore.submitSwapShiftRequest({
+                                          requesterCrewId: sch.crewId,
+                                          targetCrewId,
+                                          scheduleId: sch.id,
+                                          reason
+                                        });
+                                        alert('Permintaan Swap Shift telah dikirim ke HR Admin.');
+                                      }
+                                    }}
+                                    className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
+                                    title="Ajukan Swap Shift"
+                                  >
+                                    <Layers className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setNewSchedule({
+                                        trackingNumber: sch.trackingNumber,
+                                        storeId: sch.storeId,
+                                        fleetId: sch.fleetId,
+                                        crewId: sch.crewId,
+                                        crewHelperId: sch.crewHelperId || '',
+                                        crewHelper2Id: sch.crewHelper2Id || '',
+                                        status: sch.status,
+                                        departureDate: sch.departureDate ? sch.departureDate.substring(0, 16) : new Date().toISOString().substring(0, 16),
+                                        estimatedArrival: sch.estimatedArrival ? sch.estimatedArrival.substring(0, 16) : new Date().toISOString().substring(0, 16),
+                                        cargoDescription: sch.cargoDescription || 'FMCG Assorted',
+                                        cargoWeightTon: sch.cargoWeightTon || 15,
+                                        isInterIsland: !!sch.isInterIsland,
+                                        ferryBookingCode: sch.ferryBookingCode || '',
+                                        transitPort: sch.transitPort || '',
+                                        notes: sch.notes || '',
+                                        ...((sch as any).id ? { id: (sch as any).id } : {})
+                                      });
+                                      setIsAddScheduleOpen(true);
+                                    }}
+                                    className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
+                                    title="Edit Jadwal"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm('Apakah Anda yakin ingin menghapus jadwal ini?')) {
+                                        logisticsStore.deleteSchedule(sch.id);
+                                      }
+                                    }}
+                                    className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/40 text-red-400 border border-slate-700 transition"
+                                    title="Hapus Jadwal"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleViewRouteOnMap(sch)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 text-xs font-medium border border-cyan-500/40 transition cursor-pointer"
+                                    title="Lihat Rute di Peta Interaktif Leaflet"
+                                  >
+                                    <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                                    <span>Peta Rute</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setSelectedManifest(sch)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition cursor-pointer"
+                                    title="Lihat Surat Jalan"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>Surat Jalan</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : (
+        /* Flat Table View */
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm no-print">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th className="p-4 text-center w-12 font-semibold">#</th>
+                  <th className="p-4 font-semibold">Area Kirim (Tujuan)</th>
+                  <th className="p-4 font-semibold">Rincian Tanggal & Jam</th>
+                  <th className="p-4 font-semibold">Armada Truk</th>
+                  <th className="p-4 font-semibold">Supir & Helper</th>
+                  <th className="p-4 font-semibold">Status</th>
+                  <th className="p-4 font-semibold text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 text-slate-300">
+                {sortedFilteredSchedules.map((sch, idx) => {
+                  const isOuter = sch.isInterIsland;
+                  const dateDetails = getScheduleDateDetails(sch);
+
+                  return (
+                    <tr key={sch.id} className="hover:bg-slate-800/40 transition">
+                      <td className="p-4 text-center font-bold text-slate-500 w-12 border-r border-slate-800/60">
+                        {idx + 1}
+                      </td>
+
+                      <td className="p-4">
+                        <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            {dayName}
+                            {dateDetails.dayName}
                           </span>
-                        )}
-                        {sch.notes?.includes('Susulan') ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            Susulan
+                          {sch.notes?.includes('Susulan') ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Susulan
+                            </span>
+                          ) : sch.notes?.includes('Grosir') ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                              Grosir
+                            </span>
+                          ) : isOuter ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                              🚢 Luar Kota (Bali)
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              🚛 Lokal Jatim
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono text-slate-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                            {sch.trackingNumber}
                           </span>
-                        ) : sch.notes?.includes('Grosir') ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                            Grosir
-                          </span>
-                        ) : isOuter ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            Inter-Island
-                          </span>
-                        ) : null}
-                        <span className="text-[10px] font-mono text-slate-500">{sch.trackingNumber}</span>
-                      </div>
-                      <div className="font-semibold text-white">{sch.areaName || sch.store?.storeName || AREA_MAP[sch.storeId] || 'Area Pengiriman'}</div>
-                      <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3 h-3 text-slate-500" />
-                        <span>{sch.store?.city}, {sch.store?.island}</span>
-                      </div>
-                    </td>
+                        </div>
+                        <div className="font-extrabold text-white text-sm">
+                          {sch.areaName || sch.store?.storeName || AREA_MAP[sch.storeId] || 'Area Pengiriman'}
+                        </div>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                          <MapPin className="w-3 h-3 text-slate-500" />
+                          <span>{sch.store?.city || 'Banyuwangi DC'}, {sch.store?.island || 'Jawa Timur'}</span>
+                        </div>
+                      </td>
 
-                    <td className="p-4">
-                      <div className="flex items-center gap-1.5">
-                        <Truck className="w-3.5 h-3.5 text-blue-400" />
-                        {sch.fleet?.initialCode && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            {sch.fleet.initialCode}
-                          </span>
-                        )}
-                        <span className="font-mono font-bold text-white">{sch.fleet?.plateNumber || '-'}</span>
-                        <span className="text-[10px] text-slate-400">({sch.fleet?.vehicleType})</span>
-                      </div>
-                      <div className="flex flex-col gap-1 text-[11px] text-slate-400 mt-1">
-                        <div className="flex items-center gap-1.5">
-                          <User className="w-3 h-3 text-emerald-400" />
-                          <span>Supir: <strong className="text-slate-200">{sch.crew?.name || '-'}</strong></span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <User className="w-3 h-3 text-blue-400" />
-                          <span>Helper 1: <strong className="text-slate-200">{sch.crewHelper?.name || '-'}</strong></span>
-                        </div>
-                        {sch.crewHelper2 && (
-                          <div className="flex items-center gap-1.5">
-                            <User className="w-3 h-3 text-purple-400" />
-                            <span>Helper 2: <strong className="text-slate-200">{sch.crewHelper2.name}</strong></span>
+                      {/* Kolom Rincian Tanggal & Jam Berangkat / Tiba */}
+                      <td className="p-4">
+                        <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 space-y-1 w-fit min-w-[155px]">
+                          <div className="text-[11px] font-black text-amber-300 flex items-center gap-1.5">
+                            <Calendar className="w-3 h-3 text-amber-400" />
+                            <span>{dateDetails.formattedDate}</span>
                           </div>
-                        )}
-                      </div>
-                      {sch.areaApprovalStatus === 'approved' && (
-                        <div className="mt-1">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                            <ShieldAlert className="w-2.5 h-2.5" />
-                            <span>Otorisasi Khusus Disetujui</span>
-                          </span>
+                          <div className="text-[10px] text-slate-300 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-emerald-400" />
+                            <span>ETD: <strong>{dateDetails.depTime}</strong></span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-blue-400" />
+                            <span>ETA: <strong>{dateDetails.arrTime}</strong></span>
+                          </div>
                         </div>
-                      )}
-                    </td>
+                      </td>
 
-                    <td className="p-4">
-                      {isOuter ? (
-                        <div className="space-y-1">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            <Ship className="w-3 h-3" />
-                            <span>Luar Pulau (Ferry / Ro-Ro)</span>
-                          </span>
-                          {sch.transitPort && (
-                            <div className="text-[10px] text-slate-400 truncate max-w-[200px]" title={sch.transitPort}>
-                              Pelabuhan: {sch.transitPort}
+                      {/* Kolom Armada Truk */}
+                      <td className="p-4">
+                        <div className="flex items-center gap-1.5">
+                          <Truck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          {sch.fleet?.initialCode && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              {sch.fleet.initialCode}
+                            </span>
+                          )}
+                          <span className="font-mono font-bold text-white text-xs">{sch.fleet?.plateNumber || '-'}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {sch.fleet?.vehicleType || 'Engkel STD'} {sch.fleet?.brand ? `• ${sch.fleet.brand}` : ''}
+                        </div>
+                      </td>
+
+                      {/* Kolom Supir & Helper */}
+                      <td className="p-4">
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-400">
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>Supir: <strong className="text-slate-100">{sch.crew?.name || '-'}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3 h-3 text-blue-400 shrink-0" />
+                            <span>Helper 1: <strong className="text-slate-300">{sch.crewHelper?.name || '-'}</strong></span>
+                          </div>
+                          {sch.crewHelper2 && (
+                            <div className="flex items-center gap-1.5">
+                              <User className="w-3 h-3 text-purple-400 shrink-0" />
+                              <span>Helper 2: <strong className="text-slate-300">{sch.crewHelper2.name}</strong></span>
                             </div>
                           )}
                         </div>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                          Jalur Tol Darat (Jawa)
-                        </span>
-                      )}
-                    </td>
+                        {sch.areaApprovalStatus === 'approved' && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                              <ShieldAlert className="w-2.5 h-2.5" />
+                              <span>Otorisasi Khusus Disetujui</span>
+                            </span>
+                          </div>
+                        )}
+                      </td>
 
-                    <td className="p-4">
-                      <div className="text-[11px] text-slate-300">
-                        ETD: {new Date(sch.departureDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                      <div className="text-[11px] text-amber-400 mt-0.5 font-medium">
-                        ETA: {new Date(sch.estimatedArrival).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    </td>
+                      {/* Status */}
+                      <td className="p-4">
+                        <select
+                          value={sch.status}
+                          onChange={(e) => handleUpdateStatus(sch.id, e.target.value as ShipmentStatus)}
+                          className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer border ${
+                            sch.status === 'in_transit'
+                              ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                              : sch.status === 'scheduled'
+                              ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                              : sch.status === 'delivered'
+                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                              : 'bg-red-500/20 text-red-400 border-red-500/40'
+                          }`}
+                        >
+                          <option value="scheduled">Terjadwal</option>
+                          <option value="in_transit">Dalam Perjalanan</option>
+                          <option value="delivered">Terkirim (Selesai)</option>
+                          <option value="delayed">Tertunda (Delayed)</option>
+                        </select>
+                      </td>
 
-                    <td className="p-4">
-                      <select
-                        value={sch.status}
-                        onChange={(e) => handleUpdateStatus(sch.id, e.target.value as ShipmentStatus)}
-                        className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer border ${
-                          sch.status === 'in_transit'
-                            ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
-                            : sch.status === 'scheduled'
-                            ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                            : sch.status === 'delivered'
-                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                            : 'bg-red-500/20 text-red-400 border-red-500/40'
-                        }`}
-                      >
-                        <option value="scheduled">Terjadwal</option>
-                        <option value="in_transit">Dalam Perjalanan</option>
-                        <option value="delivered">Terkirim (Selesai)</option>
-                        <option value="delayed">Tertunda (Delayed)</option>
-                      </select>
-                    </td>
-
-                    <td className="p-4 text-right flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          const targetCrewId = prompt('Masukkan ID Kru Target:');
-                          const reason = prompt('Alasan Swap Shift:');
-                          if (targetCrewId && reason) {
-                            logisticsStore.submitSwapShiftRequest({
-                              requesterCrewId: sch.crewId,
-                              targetCrewId,
-                              scheduleId: sch.id,
-                              reason
+                      {/* Aksi */}
+                      <td className="p-4 text-right flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => {
+                            const targetCrewId = prompt('Masukkan ID Kru Target:');
+                            const reason = prompt('Alasan Swap Shift:');
+                            if (targetCrewId && reason) {
+                              logisticsStore.submitSwapShiftRequest({
+                                requesterCrewId: sch.crewId,
+                                targetCrewId,
+                                scheduleId: sch.id,
+                                reason
+                              });
+                              alert('Permintaan Swap Shift telah dikirim ke HR Admin.');
+                            }
+                          }}
+                          className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
+                          title="Ajukan Swap Shift"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setNewSchedule({
+                              trackingNumber: sch.trackingNumber,
+                              storeId: sch.storeId,
+                              fleetId: sch.fleetId,
+                              crewId: sch.crewId,
+                              crewHelperId: sch.crewHelperId || '',
+                              crewHelper2Id: sch.crewHelper2Id || '',
+                              status: sch.status,
+                              departureDate: sch.departureDate ? sch.departureDate.substring(0, 16) : new Date().toISOString().substring(0, 16),
+                              estimatedArrival: sch.estimatedArrival ? sch.estimatedArrival.substring(0, 16) : new Date().toISOString().substring(0, 16),
+                              cargoDescription: sch.cargoDescription || 'FMCG Assorted',
+                              cargoWeightTon: sch.cargoWeightTon || 15,
+                              isInterIsland: !!sch.isInterIsland,
+                              ferryBookingCode: sch.ferryBookingCode || '',
+                              transitPort: sch.transitPort || '',
+                              notes: sch.notes || '',
+                              ...((sch as any).id ? { id: (sch as any).id } : {})
                             });
-                            alert('Permintaan Swap Shift telah dikirim ke HR Admin.');
-                          }
-                        }}
-                        className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
-                        title="Ajukan Swap Shift"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setNewSchedule({
-                            trackingNumber: sch.trackingNumber,
-                            storeId: sch.storeId,
-                            fleetId: sch.fleetId,
-                            crewId: sch.crewId,
-                            crewHelperId: sch.crewHelperId || '',
-                            crewHelper2Id: sch.crewHelper2Id || '',
-                            status: sch.status,
-                            departureDate: sch.departureDate ? sch.departureDate.substring(0, 16) : new Date().toISOString().substring(0, 16),
-                            estimatedArrival: sch.estimatedArrival ? sch.estimatedArrival.substring(0, 16) : new Date().toISOString().substring(0, 16),
-                            cargoDescription: sch.cargoDescription || 'FMCG Assorted',
-                            cargoWeightTon: sch.cargoWeightTon || 15,
-                            isInterIsland: !!sch.isInterIsland,
-                            ferryBookingCode: sch.ferryBookingCode || '',
-                            transitPort: sch.transitPort || '',
-                            notes: sch.notes || '',
-                            ...((sch as any).id ? { id: (sch as any).id } : {})
-                          });
-                          setIsAddScheduleOpen(true);
-                        }}
-                        className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
-                        title="Edit Jadwal"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('Apakah Anda yakin ingin menghapus jadwal ini?')) {
-                            logisticsStore.deleteSchedule(sch.id);
-                          }
-                        }}
-                        className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/40 text-red-400 border border-slate-700 transition"
-                        title="Hapus Jadwal"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setSelectedManifest(sch)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition cursor-pointer"
-                        title="Lihat Surat Jalan"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>Surat Jalan</span>
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                            setIsAddScheduleOpen(true);
+                          }}
+                          className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition"
+                          title="Edit Jadwal"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm('Apakah Anda yakin ingin menghapus jadwal ini?')) {
+                              logisticsStore.deleteSchedule(sch.id);
+                            }
+                          }}
+                          className="inline-flex items-center p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/40 text-red-400 border border-slate-700 transition"
+                          title="Hapus Jadwal"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleViewRouteOnMap(sch)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 text-xs font-medium border border-cyan-500/40 transition cursor-pointer"
+                          title="Lihat Rute di Peta Interaktif Leaflet"
+                        >
+                          <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Peta Rute</span>
+                        </button>
+                        <button
+                          onClick={() => setSelectedManifest(sch)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition cursor-pointer"
+                          title="Lihat Surat Jalan"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Surat Jalan</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
       </>
       )}
 
@@ -1235,6 +1939,19 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
           crews={crews} 
           fleets={fleets} 
           stores={stores} 
+        />
+      )}
+
+      {activeMainTab === 'schedule_route_map' && (
+        <ScheduleRouteMap
+          schedules={schedules}
+          stores={stores}
+          fleets={fleets}
+          crews={crews}
+          selectedScheduleId={selectedRouteScheduleId}
+          onSelectSchedule={(sch) => setSelectedRouteScheduleId(sch.id)}
+          onOpenManifest={(sch) => setSelectedManifest(sch)}
+          onBackToSchedules={() => setActiveMainTab('schedules_list')}
         />
       )}
 
@@ -1328,11 +2045,14 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                     className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-semibold"
                   >
                     <option value="">-- Pilih Truk Armada --</option>
-                    {fleets.map(fl => (
-                      <option key={fl.id} value={fl.id}>
-                        {fl.initialCode ? `[${fl.initialCode}] ` : ''}{fl.plateNumber} - {fl.vehicleType} [{fl.status}]
-                      </option>
-                    ))}
+                    {fleets.map(fl => {
+                      const boxVol = fl.boxCapacityM3 || (fl.vehicleType.includes('Pick Up') ? 5.5 : fl.vehicleType.includes('Long') ? 14 : fl.vehicleType.includes('Engkel') ? 9 : 17.5);
+                      return (
+                        <option key={fl.id} value={fl.id}>
+                          {fl.initialCode ? `[${fl.initialCode}] ` : ''}{fl.plateNumber} - {fl.vehicleType} ({boxVol} m³) [{fl.status}]
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
@@ -1419,25 +2139,64 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 </div>
               </div>
 
+              {/* Preset Tanggal Kirim: Hari Ini vs Jadwal H+1 (Besok) */}
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-[11px] font-bold text-slate-400">Pilihan Waktu Kirim:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      const arr = new Date(now.getTime() + 4 * 3600000);
+                      setNewSchedule({
+                        ...newSchedule,
+                        departureDate: now.toISOString().substring(0, 16),
+                        estimatedArrival: arr.toISOString().substring(0, 16)
+                      });
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Hari Ini
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tomorrow = new Date();
+                      tomorrow.setDate(tomorrow.getDate() + 1);
+                      tomorrow.setHours(7, 30, 0, 0);
+                      const arr = new Date(tomorrow.getTime() + 8 * 3600000);
+                      setNewSchedule({
+                        ...newSchedule,
+                        departureDate: tomorrow.toISOString().substring(0, 16),
+                        estimatedArrival: arr.toISOString().substring(0, 16)
+                      });
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 cursor-pointer flex items-center gap-1"
+                  >
+                    <span>📅 Jadwal H+1 (Besok)</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 block mb-1">Estimasi Berangkat dari Argopuro</label>
+                  <label className="text-slate-400 block mb-1 text-xs">Estimasi Berangkat dari DC</label>
                   <input
                     type="datetime-local"
                     required
                     value={newSchedule.departureDate}
                     onChange={(e) => setNewSchedule({ ...newSchedule, departureDate: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs"
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Estimasi Tiba ke Argopuro</label>
+                  <label className="text-slate-400 block mb-1 text-xs">Estimasi Tiba di Toko</label>
                   <input
                     type="datetime-local"
                     required
                     value={newSchedule.estimatedArrival}
                     onChange={(e) => setNewSchedule({ ...newSchedule, estimatedArrival: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-semibold text-amber-400"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-semibold text-amber-400 text-xs"
                   />
                 </div>
               </div>
@@ -1529,12 +2288,12 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                   <span className="text-[10px] font-bold uppercase text-slate-500">ARMADA, DRIVER &amp; HELPER (KERNET):</span>
                   <div className="font-bold text-slate-900 text-sm mt-1 font-mono">{selectedManifest.fleet?.plateNumber}</div>
                   <div className="text-slate-600 mt-0.5">Tipe: {selectedManifest.fleet?.vehicleType}</div>
-                  <div className="text-slate-600 mt-0.5">Driver: <strong>{selectedManifest.crew?.name}</strong> ({selectedManifest.crew?.licenseType})</div>
-                  <div className="text-slate-600 mt-0.5">Helper 1: <strong>{selectedManifest.crewHelper?.name || '-'}</strong></div>
+                  <div className="text-slate-600 mt-0.5">Driver: <strong>{crews.find(c => c.id === selectedManifest.crewId || c.id === selectedManifest.crew?.id)?.name || selectedManifest.crew?.name}</strong> ({selectedManifest.crew?.licenseType})</div>
+                  <div className="text-slate-600 mt-0.5">Helper 1: <strong>{crews.find(c => c.id === selectedManifest.crewHelperId || c.id === selectedManifest.crewHelper?.id)?.name || selectedManifest.crewHelper?.name || '-'}</strong></div>
                   {selectedManifest.crewHelper2 && (
-                    <div className="text-slate-600 mt-0.5">Helper 2: <strong>{selectedManifest.crewHelper2.name}</strong></div>
+                    <div className="text-slate-600 mt-0.5">Helper 2: <strong>{crews.find(c => c.id === selectedManifest.crewHelper2Id || c.id === selectedManifest.crewHelper2?.id)?.name || selectedManifest.crewHelper2.name}</strong></div>
                   )}
-                  <div className="text-slate-600 mt-0.5">Telp Driver: {selectedManifest.crew?.phone}</div>
+                  <div className="text-slate-600 mt-0.5">Telp Driver: {crews.find(c => c.id === selectedManifest.crewId || c.id === selectedManifest.crew?.id)?.phone || selectedManifest.crew?.phone}</div>
                 </div>
               </div>
 
@@ -1567,35 +2326,93 @@ const YEAR_LIST = ['Semua Tahun', '2024', '2025', '2026', '2027'];
                 </tbody>
               </table>
 
-              {/* Signatures */}
-              <div className="grid grid-cols-2 gap-4 pt-4 text-center text-[11px] text-slate-600">
+              {/* Signatures 4 Kolom: SPV Logistik, Super Admin, Security, Driver / Helper */}
+              <div className="grid grid-cols-4 gap-2 pt-4 text-center text-[10px] text-slate-600 border-t border-slate-200">
                 <div>
-                  <div>Disiapkan Oleh (Koordinator Logistik):</div>
-                  <div className="h-12 border-b border-slate-300 mt-1"></div>
-                  <div className="font-bold text-slate-800 mt-1">Dewi Anggraini, S.Log</div>
+                  <div className="font-semibold text-slate-800">Disiapkan Oleh:</div>
+                  <div className="h-10 border-b border-slate-300 mt-1 flex items-center justify-center">
+                    <span className="text-[9px] text-blue-700 italic">✓ Disiapkan</span>
+                  </div>
+                  <div className="font-bold text-slate-900 mt-1">{logisticsStore.getLogisticsCoordinator()}</div>
                 </div>
                 <div>
-                  <div>Dibawa Oleh (Driver / Helper):</div>
-                  <div className="h-12 border-b border-slate-300 mt-1"></div>
-                  <div className="font-bold text-slate-800 mt-1">
-                    {selectedManifest.crew?.name || 'Driver'} 
-                    {selectedManifest.crewHelper ? ` / ${selectedManifest.crewHelper.name}` : ''}
-                    {selectedManifest.crewHelper2 ? ` / ${selectedManifest.crewHelper2.name}` : ''}
+                  <div className="font-semibold text-slate-800">Mengetahui:</div>
+                  <div className="h-10 border-b border-slate-300 mt-1 flex items-center justify-center">
+                    <span className="text-[9px] text-indigo-700 italic">✓ Diketahui</span>
+                  </div>
+                  <div className="font-bold text-slate-900 mt-1">{logisticsStore.getSuperAdminOrManager().name}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-800">Security:</div>
+                  <div className="h-10 border-b border-slate-300 mt-1 flex items-center justify-center">
+                    <span className="text-[9px] text-emerald-700 italic">✓ Gate Pass OK</span>
+                  </div>
+                  <div className="font-bold text-slate-900 mt-1">{logisticsStore.getUsers().find(u => u.fullName.toLowerCase().includes('security') || u.department?.toLowerCase().includes('security') || u.role === ('security' as any))?.fullName || 'Pos Gerbang DC (Slamet Riyadi)'}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-800">Dibawa Oleh:</div>
+                  <div className="h-10 border-b border-slate-300 mt-1 flex items-center justify-center">
+                    <span className="text-[9px] text-amber-700 italic">✓ Diserahkan</span>
+                  </div>
+                  <div className="font-bold text-slate-900 mt-1 leading-tight">
+                    {crews.find(c => c.id === selectedManifest.crewId || c.id === selectedManifest.crew?.id)?.name || selectedManifest.crew?.name || 'Driver'} 
+                    {selectedManifest.crewHelper ? ` / ${crews.find(c => c.id === selectedManifest.crewHelperId || c.id === selectedManifest.crewHelper?.id)?.name || selectedManifest.crewHelper.name}` : ''}
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="bg-slate-100 p-4 border-t border-slate-300 flex justify-end gap-2">
+            <div className="bg-slate-100 p-4 border-t border-slate-300 flex flex-wrap justify-end items-center gap-2">
               <button
                 onClick={() => setSelectedManifest(null)}
-                className="px-4 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs"
+                className="px-4 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs transition cursor-pointer"
               >
                 Tutup
               </button>
               <button
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow"
+                onClick={() => {
+                  const target = selectedManifest;
+                  setSelectedManifest(null);
+                  if (target) handleViewRouteOnMap(target);
+                }}
+                className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer shadow"
+                title="Buka dan Sorot Rute Jadwal Ini di Peta Interaktif Leaflet"
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span>Lihat Rute di Peta</span>
+              </button>
+              <button
+                onClick={handleDownloadManifestPdf}
+                disabled={isExportingManifestPdf}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-400 text-white font-bold text-xs flex items-center gap-1.5 shadow transition cursor-pointer active:scale-95"
+                title="Unduh berkas PDF resmi Surat Jalan Keluar & Manifest Siap Cetak"
+              >
+                {isExportingManifestPdf ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Memproses PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Unduh PDF Resmi</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  try {
+                    if (window.self !== window.top) {
+                      handleDownloadManifestPdf();
+                    } else {
+                      window.print();
+                    }
+                  } catch {
+                    handleDownloadManifestPdf();
+                  }
+                }}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition cursor-pointer active:scale-95"
+                title="Cetak langsung menggunakan printer atau cetak ke PDF"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Cetak Dokumen Surat Jalan</span>

@@ -290,12 +290,20 @@ class DataBridgeService {
       let tableMissingWarning = false;
 
       // -------------------------------------------------------------
-      // STEP A: UPSERT FLEETS (Armada)
+      // STEP A: UPSERT FLEETS (Armada) - HANYA PLAT RESMI NON-AKK
       // -------------------------------------------------------------
       const fleetIdMap = new Map<string, string>(); // plate_number / initialCode -> uuid
 
       if (this.config.syncFleets && localFleets.length > 0) {
-        const fleetPayload = localFleets.map(f => ({
+        // Hapus semua armada dengan akhiran plat AKK dari Supabase jika ada
+        try {
+          await supabase.from('fleets').delete().ilike('plate_number', '%AKK');
+        } catch (delErr) {
+          console.warn('[DataBridge] Note deleting AKK plates:', delErr);
+        }
+
+        const validFleets = localFleets.filter(f => !f.plateNumber.trim().toUpperCase().endsWith('AKK'));
+        const fleetPayload = validFleets.map(f => ({
           plate_number: f.plateNumber.trim().toUpperCase(),
           vehicle_type: f.vehicleType || 'Engkel STD',
           tonnage_capacity: f.tonnageCapacity || 5.0,

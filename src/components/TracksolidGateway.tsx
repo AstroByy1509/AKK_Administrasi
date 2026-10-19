@@ -42,6 +42,7 @@ import {
 import { TracksolidDevice } from '../types';
 import { logisticsStore } from '../services/store';
 import { LeafletMap } from './LeafletMap';
+import { tracksolidSyncService, TracksolidSyncState } from '../services/tracksolidSyncService';
 
 export const TracksolidGateway: React.FC = () => {
   const [devices, setDevices] = useState<TracksolidDevice[]>(logisticsStore.getDevices());
@@ -64,6 +65,14 @@ export const TracksolidGateway: React.FC = () => {
   const [showRightDetail, setShowRightDetail] = useState<boolean>(true);
   const [showApiModal, setShowApiModal] = useState<boolean>(false);
   const [syncPulse, setSyncPulse] = useState<boolean>(false);
+
+  // 📡 Global 5-Minute Tracksolid Sync Service Subscription
+  const [globalSyncState, setGlobalSyncState] = useState<TracksolidSyncState>(tracksolidSyncService.getState());
+  const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
+
+  useEffect(() => {
+    return tracksolidSyncService.subscribe(setGlobalSyncState);
+  }, []);
   const [apiConfig, setApiConfig] = useState({
     serverUrl: 'http://open.tracksolidpro.com/route/rest',
     account: 'nstrargo',
@@ -76,6 +85,11 @@ export const TracksolidGateway: React.FC = () => {
   const CREDENTIAL_EMAIL = 'nstrargo';
   const CREDENTIAL_PASS = 'nusantara60';
 
+  const selectedDeviceRef = useRef<TracksolidDevice | null>(selectedDevice);
+  useEffect(() => {
+    selectedDeviceRef.current = selectedDevice;
+  }, [selectedDevice]);
+
   // Perform Real-Time Telemetry Synchronization
   const performRealtimeTick = useCallback(() => {
     setSyncPulse(true);
@@ -85,63 +99,69 @@ export const TracksolidGateway: React.FC = () => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const timeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    setDevices(prevDevices => {
-      const updated = prevDevices.map(d => {
-        const isMoving = d.status === 'Online' || d.currentSpeedKmh > 0;
-        if (isMoving) {
-          // Subtle realistic movement along coastal / route coordinates
-          const latJitter = (Math.random() - 0.48) * 0.0003;
-          const lngJitter = (Math.random() - 0.48) * 0.0003;
-          const currentMileage = d.todayMileageKm ?? 0;
-          const newMileage = parseFloat((currentMileage + 0.04 + Math.random() * 0.05).toFixed(2));
-          const newSpeed = Math.max(18, Math.min(60, Math.round(d.currentSpeedKmh + (Math.random() - 0.5) * 4)));
-          return {
-            ...d,
-            lastUpdate: timeStr,
-            lastFix: timeStr,
-            latitude: d.latitude + latJitter,
-            longitude: d.longitude + lngJitter,
-            currentSpeedKmh: newSpeed,
-            todayMileageKm: newMileage,
-            satellites: Math.min(18, Math.max(10, d.satellites + (Math.random() > 0.5 ? 1 : -1)))
-          };
-        } else {
-          // Parked vehicle (ACC: OFF): refresh live online heartbeat timestamp, keep position rock-solid
-          return {
-            ...d,
-            lastUpdate: timeStr,
-            satellites: Math.min(13, Math.max(9, d.satellites + (Math.random() > 0.7 ? 1 : 0)))
-          };
-        }
-      });
-
-      logisticsStore.updateDevices(updated);
-
-      if (selectedDevice) {
-        const matching = updated.find(u => u.imei === selectedDevice.imei);
-        if (matching) {
-          setSelectedDevice(matching);
-        }
+    const currentDevices = logisticsStore.getDevices();
+    const updated = currentDevices.map(d => {
+      const isMoving = d.status === 'Online' || d.currentSpeedKmh > 0;
+      if (isMoving) {
+        // Subtle realistic movement along coastal / route coordinates
+        const latJitter = (Math.random() - 0.48) * 0.0003;
+        const lngJitter = (Math.random() - 0.48) * 0.0003;
+        const currentMileage = d.todayMileageKm ?? 0;
+        const newMileage = parseFloat((currentMileage + 0.04 + Math.random() * 0.05).toFixed(2));
+        const newSpeed = Math.max(18, Math.min(60, Math.round(d.currentSpeedKmh + (Math.random() - 0.5) * 4)));
+        return {
+          ...d,
+          lastUpdate: timeStr,
+          lastFix: timeStr,
+          latitude: d.latitude + latJitter,
+          longitude: d.longitude + lngJitter,
+          currentSpeedKmh: newSpeed,
+          todayMileageKm: newMileage,
+          satellites: Math.min(18, Math.max(10, d.satellites + (Math.random() > 0.5 ? 1 : -1)))
+        };
+      } else {
+        // Parked vehicle (ACC: OFF): refresh live online heartbeat timestamp, keep position rock-solid
+        return {
+          ...d,
+          lastUpdate: timeStr,
+          satellites: Math.min(13, Math.max(9, d.satellites + (Math.random() > 0.7 ? 1 : 0)))
+        };
       }
-
-      return updated;
     });
 
+    logisticsStore.updateDevices(updated);
+    setDevices(updated);
+
+    if (selectedDeviceRef.current) {
+      const matching = updated.find(u => u.imei === selectedDeviceRef.current?.imei);
+      if (matching) {
+        setSelectedDevice(matching);
+      }
+    }
+
     setLastRefreshed(now.toLocaleTimeString('id-ID'));
-  }, [selectedDevice]);
+  }, []);
 
   // Real-time Countdown Timer (ticking every second)
+  const countdownRef = useRef(autoSyncInterval);
+
+  useEffect(() => {
+    countdownRef.current = autoSyncInterval;
+    setCountdown(autoSyncInterval);
+  }, [autoSyncInterval]);
+
   useEffect(() => {
     if (!isLiveActive || autoSyncInterval <= 0) return;
 
     const intervalId = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          performRealtimeTick();
-          return autoSyncInterval;
-        }
-        return prev - 1;
-      });
+      countdownRef.current -= 1;
+      if (countdownRef.current <= 0) {
+        countdownRef.current = autoSyncInterval;
+        setCountdown(autoSyncInterval);
+        performRealtimeTick();
+      } else {
+        setCountdown(countdownRef.current);
+      }
     }, 1000);
 
     return () => clearInterval(intervalId);
@@ -151,11 +171,11 @@ export const TracksolidGateway: React.FC = () => {
     return logisticsStore.subscribe(() => {
       const devList = logisticsStore.getDevices();
       setDevices(devList);
-      if (!selectedDevice && devList.length > 0) {
+      if (!selectedDeviceRef.current && devList.length > 0) {
         setSelectedDevice(devList[0]);
       }
     });
-  }, [selectedDevice]);
+  }, []);
 
   const handleCopy = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text);
@@ -241,6 +261,62 @@ export const TracksolidGateway: React.FC = () => {
               <span>Muat Ulang</span>
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* 📡 STATUS AUTO-SYNC TRACKSOLID API (SETIAP 5 MENIT) */}
+      <div className="bg-gradient-to-r from-slate-900 via-blue-950/40 to-slate-900 border border-blue-500/30 rounded-xl p-4 shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+            <Radio className="w-5 h-5 animate-pulse text-cyan-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white text-sm">
+                Sinkronisasi Otomatis API Tracksolid Pro
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                Setiap 5 Menit (300s)
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Sistem menyinkronkan data GPS seluruh {devices.length} armada secara otomatis di latar belakang untuk menjamin lokasi armada di peta selalu akurat tanpa refresh manual.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {globalSyncState.isAutoSyncEnabled && (
+            <div className="flex items-center gap-2 bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
+              <Clock size={13} className="text-cyan-400 animate-pulse" />
+              <span className="text-slate-400 text-[11px]">Sync Berikutnya:</span>
+              <span className="text-cyan-300 font-bold">
+                {tracksolidSyncService.formatCountdown(globalSyncState.countdownSeconds)}
+              </span>
+            </div>
+          )}
+
+          <div className="text-right hidden sm:block">
+            <div className="text-[11px] text-slate-400">Terakhir Diperbarui:</div>
+            <div className="text-xs font-mono font-bold text-slate-200">
+              {globalSyncState.lastSyncTime || lastRefreshed} WIB
+            </div>
+          </div>
+
+          <button
+            onClick={async () => {
+              setIsManualSyncing(true);
+              const res = await tracksolidSyncService.triggerSync('manual');
+              setIsManualSyncing(false);
+              setCommandFeedback(res.message);
+              setTimeout(() => setCommandFeedback(null), 3000);
+            }}
+            disabled={globalSyncState.isSyncing || isManualSyncing}
+            className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={globalSyncState.isSyncing || isManualSyncing ? 'animate-spin' : ''} />
+            <span>{globalSyncState.isSyncing || isManualSyncing ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
+          </button>
         </div>
       </div>
 
@@ -812,11 +888,15 @@ export const TracksolidGateway: React.FC = () => {
                       setAutoSyncInterval(val);
                       setCountdown(val);
                       setIsLiveActive(val > 0);
+                      if (val === 300) {
+                        tracksolidSyncService.setIntervalSeconds(300);
+                        tracksolidSyncService.setAutoSyncEnabled(true);
+                      }
                     }}
                     className="bg-transparent text-xs font-bold text-slate-800 border-none outline-none cursor-pointer pr-1"
                   >
-                    <option value={10}>10s</option>
-                    <option value={15}>15s (Default Tracksolid)</option>
+                    <option value={300}>5 Menit (Standar Sistem)</option>
+                    <option value={15}>15s (Konsol Cepat)</option>
                     <option value={30}>30s</option>
                     <option value={60}>60s</option>
                     <option value={0}>Pause</option>

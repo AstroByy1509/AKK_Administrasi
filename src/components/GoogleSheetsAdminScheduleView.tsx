@@ -65,6 +65,7 @@ import { googleSheetsSyncService } from '../services/googleSheetsSyncService';
 import { standardizeAreaName, getAreaSubDetail } from '../utils/areaNormalizer';
 import { areaAutoMapper, AreaMappingEntry, OfficialAreaItem } from '../services/areaAutoMapper';
 import { crewAutoMapper, CrewMappingEntry, OfficialCrewItem } from '../services/crewAutoMapper';
+import { persistSchedulesToDatabase, fetchPersistedSchedulesFromServer } from '../services/supabaseService';
 import { QuickCreateAreaModal } from './QuickCreateAreaModal';
 import { QuickCreateCrewModal } from './QuickCreateCrewModal';
 import { AreaAutoMappingSection } from './AreaAutoMappingSection';
@@ -149,7 +150,36 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
   const [uploadedValidationReport, setUploadedValidationReport] = useState<ValidationSummaryReport | null>(null);
   const [skipDuplicatesUpload, setSkipDuplicatesUpload] = useState<boolean>(false);
   const [skipInvalidUpload, setSkipInvalidUpload] = useState<boolean>(true);
+  const [isUploadConfigModalOpen, setIsUploadConfigModalOpen] = useState<boolean>(false);
+  const [importMonth, setImportMonth] = useState<string>('Oktober');
+  const [importYear, setImportYear] = useState<string>('2026');
+  const [importMode, setImportMode] = useState<'tambahkan' | 'ganti'>('tambahkan');
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
+  const [schemaValidationError, setSchemaValidationError] = useState<any | null>(null);
+  const [uploadToast, setUploadToast] = useState<{
+    message: string;
+    type: 'error' | 'success';
+    templateDownloadUrl?: string;
+  } | null>(null);
+
+  // Auto-dismiss upload toast notification (menghilang otomatis setelah 4 detik untuk notifikasi sukses)
+  useEffect(() => {
+    if (!uploadToast) return;
+    const duration = uploadToast.type === 'success' ? 4000 : 7000;
+    const timer = setTimeout(() => {
+      setUploadToast(null);
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [uploadToast]);
+  const [isExcelPreviewModalOpen, setIsExcelPreviewModalOpen] = useState<boolean>(false);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewHeaders, setPreviewHeaders] = useState<string[]>([]);
+  const [previewTopRows, setPreviewTopRows] = useState<any[][]>([]);
+  const [previewTotalRows, setPreviewTotalRows] = useState<number>(0);
+  const [previewSheetName, setPreviewSheetName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const modalFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Intelligent Area & Crew Auto-Mapping State
   const [detectedAreaMappings, setDetectedAreaMappings] = useState<Record<string, AreaMappingEntry>>({});
@@ -343,8 +373,7 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
     // 1. First priority: Real schedules in logisticsStore
     const storeSchedules = logisticsStore.getSchedules();
     const weeksFromStore = convertSchedulesToAdminWeeks(storeSchedules, selectedYear, effectiveMonth);
-    const day5Count = weeksFromStore[0]?.days?.find(d => d.dayNumber === 5)?.pengiriman?.length || 0;
-    if (weeksFromStore.length > 0 && weeksFromStore[0]?.days?.length > 0 && (selectedYear !== 2026 || effectiveMonth !== 0 || day5Count <= 8)) {
+    if (weeksFromStore.length > 0 && weeksFromStore[0]?.days?.length > 0) {
       return weeksFromStore;
     }
 
@@ -354,8 +383,7 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
       const saved = localStorage.getItem(cacheKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        const cachedDay5 = parsed[0]?.days?.find((d: any) => d.dayNumber === 5)?.pengiriman?.length || 0;
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.days?.length > 0 && (selectedYear !== 2026 || effectiveMonth !== 0 || cachedDay5 <= 8)) {
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.days?.length > 0) {
           return parsed;
         }
       }
@@ -365,22 +393,27 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
     return buildMonthSpecificSchedule(selectedYear, effectiveMonth);
   });
 
+  const weeksRef = React.useRef(weeks);
+  weeksRef.current = weeks;
+
+  // On initial mount, load persisted schedules from server database if available
+  useEffect(() => {
+    fetchPersistedSchedulesFromServer().then(res => {
+      if (res.exists && res.schedules.length > 0) {
+        console.info(`[Database Persistence] Loaded ${res.count} persisted schedules from server.`);
+        logisticsStore.batchSyncSchedules(res.schedules, [], { isImport: false });
+        if (res.weeks && res.weeks.length > 0) {
+          setWeeks(res.weeks);
+        }
+      }
+    }).catch(err => console.warn('[Database Persistence Load Error]', err));
+  }, []);
+
   // Keep weeks and store in sync whenever selectedYear, selectedMonth changes or store updates
   useEffect(() => {
     const effectiveMonth = selectedMonth === -1 ? 0 : selectedMonth;
     const storeSchedules = logisticsStore.getSchedules();
     const weeksFromStore = convertSchedulesToAdminWeeks(storeSchedules, selectedYear, effectiveMonth);
-    const day5Count = weeksFromStore[0]?.days?.find(d => d.dayNumber === 5)?.pengiriman?.length || 0;
-
-    // Self-heal and reset if day 5 was corrupted with duplicate trips (> 8)
-    if (selectedYear === 2026 && effectiveMonth === 0 && day5Count > 8) {
-      const cleanOfficial = buildMonthSpecificSchedule(2026, 0);
-      setWeeks(cleanOfficial);
-      const existing = logisticsStore.getSchedules().filter(s => !s.departureDate || !s.departureDate.startsWith('2026-01-'));
-      logisticsStore.setSchedules(existing);
-      seedWeeksIntoStore(cleanOfficial, 2026, 0);
-      return;
-    }
 
     if (weeksFromStore.length > 0 && weeksFromStore[0]?.days?.length > 0) {
       setWeeks(weeksFromStore);
@@ -421,17 +454,19 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
       const curSchedules = logisticsStore.getSchedules();
       const updatedWeeks = convertSchedulesToAdminWeeks(curSchedules, selectedYear, effectiveMonth);
       if (updatedWeeks.length > 0 && updatedWeeks[0]?.days?.length > 0) {
-        setWeeks(updatedWeeks);
+        // Protect active weeks: only update if store has at least as many trips, or if weeks was empty
+        const curTrips = weeksRef.current.flatMap(w => w.days).reduce((acc, d) => acc + (d.pengiriman?.length || 0), 0);
+        const newTrips = updatedWeeks.flatMap(w => w.days).reduce((acc, d) => acc + (d.pengiriman?.length || 0), 0);
+        if (newTrips >= curTrips || curTrips === 0) {
+          setWeeks(updatedWeeks);
+        }
       }
     });
 
     return unsubscribe;
   }, [selectedYear, selectedMonth]);
 
-  const weeksRef = React.useRef(weeks);
-  weeksRef.current = weeks;
-
-  // Background Auto-Sync Timer (auto-saves and checks live Google Sheets if enabled)
+  // Background Auto-Sync Timer: keeps cache updated and only syncs Google Sheets if explicitly requested
   useEffect(() => {
     if (!isAutoSyncEnabled) return;
 
@@ -444,12 +479,12 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
         localStorage.setItem('akk_admin_schedule_weeks_cache', JSON.stringify(weeksRef.current));
       } catch {}
 
-      // 2. If Google Sheets config has valid spreadsheet, run silent background sync
+      // 2. Only if explicitly configured & auto-sync enabled by user
       const conf = googleSheetsApiService.getConfig();
-      if (conf.spreadsheetId || conf.spreadsheetUrl) {
+      if (conf.isAutoSyncEnabled && (conf.spreadsheetId || conf.spreadsheetUrl)) {
         handleLiveFetchFromSheets().catch(() => {});
       }
-    }, 45000);
+    }, 60000);
 
     return () => clearInterval(intervalId);
   }, [isAutoSyncEnabled, selectedYear, selectedMonth]);
@@ -1156,77 +1191,303 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
     }
   };
 
-  // Handle File Upload & Processing
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const downloadScheduleTemplate = () => {
+    try {
+      const wb = XLSX.utils.book_new();
+      const wsData = [
+        ['PT ANUGRAH KEMASAN KREATIF - TEMPLATE JADWAL OPERASIONAL LOGISTIK'],
+        ['Tanggal', 'No', 'Driver', 'Helper', '', 'Area Kirim', 'Armada'],
+        ['', '', '', '1', '2', '', ''],
+        // Day 1: 05/01/2026
+        ['05/01/2026', 1, 'Supri', 'Rifal', 'Aldi', 'DENPASAR 1', 'DS3'],
+        ['', 2, 'Wahyu', 'Yusuf', '', 'DENPASAR 2', 'DS1'],
+        ['', 3, 'Tiar', 'Faris', '', 'BONDOWOSO', 'NS3'],
+        ['', 4, 'Aris', 'Rohman', '', 'SITUBONDO', 'DS2'],
+        ['', 5, 'Andre', 'Aan', '', 'SUSULAN GENTENG - ROGOJAMPI', 'DS4'],
+        ['', 6, 'Wibi', 'Teguh', '', 'PURWO DAMBUNTUNG', 'NS2'],
+        ['', 7, 'Budi', 'Rizal', '', 'PURWO PASAR', 'NS1'],
+        ['', 8, 'Hadi', 'Yudi', '', 'JAJAG RETAIL', 'N20'],
+        ['------------------------------------------------------------', '----------------', '----------------', '----------------', '----------------', '----------------', '----------------'],
+        // Day 2: 06/01/2026
+        ['06/01/2026', 1, 'Andre', 'Aan', 'Hardi', 'SINGARAJA', 'DS5'],
+        ['', 2, 'Hadi', 'Yusuf', '', 'SUMBERAYU RETAIL', 'NL2'],
+        ['', 3, 'Aris', 'Rifal', '', 'GALEKAN', 'NL1'],
+        ['', 4, 'Tiar', 'Faris', '', 'GROSIR BWI - ROGOJAMPI', 'DS4'],
+        ['', 5, 'Budi', 'Rohman', '', 'SUSULAN SANGGAR JAJAG', 'NS1'],
+        ['------------------------------------------------------------', '----------------', '----------------', '----------------', '----------------', '----------------', '----------------'],
+        // Day 3: 07/01/2026
+        ['07/01/2026', 1, 'Supri', 'Rifal', '', 'DENPASAR 1', 'DS5'],
+        ['', 2, 'Hadi', 'Faris', '', 'DENPASAR 2', 'DS3'],
+        ['', 3, 'Aris', 'Rohman', '', 'GENTENG RETAIL', 'NL2'],
+        ['', 4, 'Tiar', 'Yusuf', '', 'ROGOJAMPI RETAIL', 'DS4'],
+        ['', 5, 'Budi', 'Aan', '', 'MUNCAR RETAIL', 'NS2'],
+        ['', 6, 'Aldi', 'Wahyu', '', 'KETAPANG WONGSOREJO', 'NS3']
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, 'ALL');
+      XLSX.writeFile(wb, 'Template_Jadwal_Operasional_AKK.xlsx');
+    } catch (err) {
+      console.error('Error generating template:', err);
+      alert('Gagal mengunduh template spreadsheet.');
+    }
+  };
+
+  // Core file processing with server-side schema validation & preview modal
+  // Instant local spreadsheet schema validation (reliable, offline-safe, zero HTML error)
+  const validateSpreadsheetLocally = (rows: any[][]) => {
+    if (!rows || rows.length === 0) {
+      return {
+        valid: false,
+        error: 'Spreadsheet Kosong',
+        message: 'File Excel tidak memiliki baris data atau lembar kerja kosong.',
+        missingColumns: ['Semua Kolom Data'],
+        correctFormat: 'NO | TANGGAL | DRIVER | HELPER | AREA | ARMADA',
+        templateDownloadUrl: '/api/download-schedule-template'
+      };
+    }
+
+    let hasDriver = false;
+    let hasArea = false;
+    let hasArmada = false;
+    const detectedHeaders: string[] = [];
+
+    for (let r = 0; r < Math.min(rows.length, 10); r++) {
+      const row = rows[r];
+      if (!row || !Array.isArray(row)) continue;
+      for (let c = 0; c < row.length; c++) {
+        const val = String(row[c] || '').toUpperCase().trim();
+        if (val) detectedHeaders.push(val);
+        if (val === 'DRIVER' || val === 'SUPIR') hasDriver = true;
+        if (val.includes('AREA') || val.includes('TUJUAN') || val.includes('RUTE')) hasArea = true;
+        if (val === 'ARMADA' || val === 'MOBIL' || val === 'PLAT') hasArmada = true;
+      }
+    }
+
+    const missingColumns: string[] = [];
+    if (!hasDriver) missingColumns.push('DRIVER (atau SUPIR)');
+    if (!hasArea) missingColumns.push('AREA / TUJUAN');
+    if (!hasArmada) missingColumns.push('ARMADA');
+
+    if (missingColumns.length > 0) {
+      return {
+        valid: false,
+        error: 'Format Kolom Spreadsheet Tidak Sesuai Schema',
+        message: `Header kolom wajib PT AKK Logistics tidak lengkap. Kolom yang tidak ditemukan: ${missingColumns.join(', ')}.`,
+        missingColumns,
+        detectedHeaders: Array.from(new Set(detectedHeaders)).slice(0, 15),
+        correctFormat: 'Format Standar: NO | TANGGAL | DRIVER | HELPER | AREA / TUJUAN | ARMADA',
+        templateDownloadUrl: '/api/download-schedule-template'
+      };
+    }
+
+    return { valid: true };
+  };
+
+  // Core file processing with instant client-side validation & preview modal
+  const processFile = async (file: File) => {
     if (!file) return;
-
     setUploadedFileName(file.name);
-    const reader = new FileReader();
 
-    reader.onload = (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        // Find sheet 'ALL' or use first sheet
-        const sheetName = workbook.SheetNames.find(n => n.toUpperCase() === 'ALL') || workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+    try {
+      // 1. Read workbook directly in browser via ArrayBuffer
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const workbook = XLSX.read(data, { type: 'array' });
+      
+      const sheetName = workbook.SheetNames.find(n => n.toUpperCase() === 'ALL') || workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-        setUploadedRowsCount(jsonRows.length);
-        const parsedTrips = googleSheetsApiService.parseScheduleRows(jsonRows);
-        setParsedUploadedTrips(parsedTrips);
+      // 2. Perform client-side schema validation
+      const valResult = validateSpreadsheetLocally(jsonRows);
 
-        // Update active schedule grid dynamically with uploaded trips!
-        if (parsedTrips.length > 0) {
-          const groupedWeeks = convertParsedTripsToWeeks(parsedTrips);
-          updateWeeks(groupedWeeks);
+      if (!valResult.valid) {
+        setSchemaValidationError(valResult);
+        setUploadToast({
+          message: valResult.error || 'Format file Excel tidak sesuai dengan schema sistem.',
+          type: 'error',
+          templateDownloadUrl: valResult.templateDownloadUrl || '/api/download-schedule-template'
+        });
+        return;
+      }
+
+      setSchemaValidationError(null);
+      setUploadToast({
+        message: 'File spreadsheet berhasil divalidasi dan siap dipratinjau.',
+        type: 'success'
+      });
+
+      // 3. Smart Header & Data Row Extraction:
+      // (a) Scan first 10 rows for column headers
+      let headerRowIdx = -1;
+      let maxKeywordMatches = 0;
+
+      for (let r = 0; r < Math.min(jsonRows.length, 10); r++) {
+        const row = jsonRows[r];
+        if (!row || !Array.isArray(row) || row.length === 0) continue;
+        let matches = 0;
+        for (const cell of row) {
+          const cellUpper = String(cell || '').toUpperCase().trim();
+          if (cellUpper === 'DRIVER' || cellUpper === 'SUPIR') matches += 3;
+          if (cellUpper.includes('AREA') || cellUpper.includes('TUJUAN') || cellUpper.includes('RUTE')) matches += 3;
+          if (cellUpper === 'ARMADA' || cellUpper === 'MOBIL' || cellUpper === 'PLAT') matches += 3;
+          if (cellUpper.includes('TANGGAL') || cellUpper.includes('DATE') || cellUpper.includes('HARI')) matches += 2;
+          if (cellUpper === 'HELPER' || cellUpper === 'KERNET') matches += 2;
+          if (cellUpper === 'NO' || cellUpper === 'NO.' || cellUpper === 'NOMOR' || cellUpper === 'NO URUT') matches += 1;
+        }
+        if (matches > maxKeywordMatches) {
+          maxKeywordMatches = matches;
+          headerRowIdx = r;
+        }
+      }
+
+      // Fallback: pick the row with the most non-empty columns if no strong header detected
+      if (headerRowIdx === -1 || maxKeywordMatches < 2) {
+        let maxNonEmpty = 0;
+        for (let r = 0; r < Math.min(jsonRows.length, 5); r++) {
+          const row = jsonRows[r];
+          if (!row || !Array.isArray(row)) continue;
+          const count = row.filter(c => c !== undefined && c !== null && String(c).trim() !== '').length;
+          if (count > maxNonEmpty) {
+            maxNonEmpty = count;
+            headerRowIdx = r;
+          }
+        }
+        if (headerRowIdx === -1) headerRowIdx = 0;
+      }
+
+      const rawHeaderRow = jsonRows[headerRowIdx] || [];
+      const nextRow = jsonRows[headerRowIdx + 1];
+
+      // (b) Check if row directly below headers is a sub-header (e.g. '1', '2' under Helper)
+      let isNextRowSubheader = false;
+      if (nextRow && Array.isArray(nextRow) && nextRow.length > 0) {
+        const hasDriverOrArea = nextRow.some(c => {
+          const str = String(c || '').trim();
+          return str.length > 3 && !/^\d+$/.test(str) && !['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU', 'MINGGU'].includes(str.toUpperCase());
+        });
+        const hasSubIndices = nextRow.some(c => String(c || '').trim() === '1' || String(c || '').trim() === '2');
+        if (!hasDriverOrArea && hasSubIndices) {
+          isNextRowSubheader = true;
+        }
+      }
+
+      const dataStartIdx = isNextRowSubheader ? headerRowIdx + 2 : headerRowIdx + 1;
+      const allDataRows = jsonRows.slice(dataStartIdx);
+
+      // (c) Find max columns across rawHeaderRow, nextRow, and all data rows to avoid any column truncation
+      let maxCols = Math.max(rawHeaderRow.length, isNextRowSubheader && nextRow ? nextRow.length : 0);
+      for (const dr of allDataRows) {
+        if (dr && Array.isArray(dr) && dr.length > maxCols) {
+          maxCols = dr.length;
+        }
+      }
+
+      // (d) Build clean headers
+      const finalHeaders: string[] = [];
+      let lastParentHeader = '';
+
+      for (let c = 0; c < maxCols; c++) {
+        let h = String(rawHeaderRow[c] || '').trim();
+        if (h) {
+          lastParentHeader = h;
         }
 
-        // Intelligent Auto-Mapping for uploaded raw areas & crews
-        const rawAreas = parsedTrips.map(t => t.area).filter(Boolean);
-        const mappings = areaAutoMapper.processRawAreaBatch(rawAreas);
-        setDetectedAreaMappings(mappings);
-
-        // Extract raw crew names (drivers and helpers)
-        const rawCrews: Array<{ name: string; roleHint?: 'Driver' | 'Helper' }> = [];
-        parsedTrips.forEach(t => {
-          if (t.driver) rawCrews.push({ name: t.driver, roleHint: 'Driver' });
-          if (t.helper) {
-            t.helper.split(/[,&/]+/).forEach(h => {
-              const cleanH = h.trim();
-              if (cleanH && cleanH !== '-' && cleanH !== '0') {
-                rawCrews.push({ name: cleanH, roleHint: 'Helper' });
-              }
-            });
+        if (isNextRowSubheader && nextRow && nextRow[c] !== undefined && String(nextRow[c]).trim() !== '') {
+          const sub = String(nextRow[c]).trim();
+          if (h) {
+            h = `${h} ${sub}`;
+          } else if (lastParentHeader) {
+            h = `${lastParentHeader} ${sub}`;
+          } else {
+            h = sub;
           }
-        });
-        const crewMappings = crewAutoMapper.processRawCrewBatch(rawCrews);
-        setDetectedCrewMappings(crewMappings);
+        }
 
-        // Build mapping dictionary
-        const mappingDict: Record<string, string> = {};
-        Object.entries(mappings).forEach(([k, v]) => {
-          if (v.matchedOfficialArea) mappingDict[k] = v.matchedOfficialArea;
-        });
-
-        const targetContextDate = new Date(selectedYear, selectedMonth === -1 ? 0 : selectedMonth, 5);
-        const validation = scheduleImportValidator.validateImportBatch(parsedTrips, targetContextDate, mappingDict);
-        setUploadedValidationReport(validation);
-
-        // If any unmapped area or crew, show appropriate mapping tab first
-        const hasUnmappedArea = Object.values(mappings).some(m => m.confidence === 'unmapped');
-        const hasUnmappedCrew = Object.values(crewMappings).some(m => m.confidence === 'unmapped');
-        setActiveUploadTab(hasUnmappedArea ? 'area_mapping' : (hasUnmappedCrew ? 'crew_mapping' : 'audit'));
-        setIsUploadModalOpen(true);
-      } catch (err) {
-        console.error('File parsing error:', err);
-        alert('Gagal membaca struktur file Excel / CSV.');
+        if (!h) {
+          if (c === 0) h = 'Tanggal';
+          else if (c === 1 && rawHeaderRow.some(x => String(x).toUpperCase().includes('DRIVER'))) h = 'No';
+          else if (c === 4 && String(finalHeaders[3] || '').includes('Helper')) h = 'Helper 2';
+          else h = `Kolom ${c + 1}`;
+        }
+        finalHeaders.push(h);
       }
-    };
 
-    reader.readAsArrayBuffer(file);
+      setPreviewFile(file);
+      setPreviewHeaders(finalHeaders);
+      setPreviewTopRows(allDataRows);
+      setPreviewTotalRows(allDataRows.length);
+      setPreviewSheetName(sheetName);
+      setIsExcelPreviewModalOpen(true);
+    } catch (err) {
+      console.error('File parsing error:', err);
+      alert('Gagal membaca struktur file Excel / CSV.');
+    }
+  };
+
+  const executeFinalUpload = async (file: File) => {
+    setIsExcelPreviewModalOpen(false);
+    setUploadToast(null);
+    if (!file) return;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const workbook = XLSX.read(data, { type: 'array' });
+      
+      const sheetName = workbook.SheetNames.find(n => n.toUpperCase() === 'ALL') || workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+      setUploadedRowsCount(jsonRows.length);
+      const parsedTrips = googleSheetsApiService.parseScheduleRows(jsonRows);
+      setParsedUploadedTrips(parsedTrips);
+
+      if (parsedTrips.length > 0) {
+        const groupedWeeks = convertParsedTripsToWeeks(parsedTrips);
+        updateWeeks(groupedWeeks);
+      }
+
+      const rawAreas = parsedTrips.map(t => t.area).filter(Boolean);
+      const mappings = areaAutoMapper.processRawAreaBatch(rawAreas);
+      setDetectedAreaMappings(mappings);
+
+      const rawCrews: Array<{ name: string; roleHint?: 'Driver' | 'Helper' }> = [];
+      parsedTrips.forEach(t => {
+        if (t.driver) rawCrews.push({ name: t.driver, roleHint: 'Driver' });
+        if (t.helper) {
+          t.helper.split(/[,&/]+/).forEach(h => {
+            const cleanH = h.trim();
+            if (cleanH && cleanH !== '-' && cleanH !== '0') {
+              rawCrews.push({ name: cleanH, roleHint: 'Helper' });
+            }
+          });
+        }
+      });
+      const crewMappings = crewAutoMapper.processRawCrewBatch(rawCrews);
+      setDetectedCrewMappings(crewMappings);
+
+      const mappingDict: Record<string, string> = {};
+      Object.entries(mappings).forEach(([k, v]) => {
+        if (v.matchedOfficialArea) mappingDict[k] = v.matchedOfficialArea;
+      });
+
+      const targetContextDate = new Date(selectedYear, selectedMonth === -1 ? 0 : selectedMonth, 5);
+      const validation = scheduleImportValidator.validateImportBatch(parsedTrips, targetContextDate, mappingDict);
+      setUploadedValidationReport(validation);
+
+      const hasUnmappedArea = Object.values(mappings).some(m => m.confidence === 'unmapped');
+      const hasUnmappedCrew = Object.values(crewMappings).some(m => m.confidence === 'unmapped');
+      setActiveUploadTab(hasUnmappedArea ? 'area_mapping' : (hasUnmappedCrew ? 'crew_mapping' : 'audit'));
+      setIsUploadModalOpen(true);
+    } catch (err) {
+      console.error('Final upload execution error:', err);
+      alert('Gagal memproses file Excel secara penuh.');
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
   };
 
   // Handle direct manual live fetch from connected Google Sheets
@@ -1360,6 +1621,13 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
     // Directly push to submenu Histori & Otorisasi Kru
     logisticsStore.syncSchedulesToCrewHistory();
 
+    // Robust Upsert to Server & Supabase Cloud for 147+ shipments batch
+    persistSchedulesToDatabase(logisticsStore.getSchedules(), weeks, {
+      month: String(effectiveMonth + 1),
+      year: Number(selectedYear),
+      source: 'schedule_management_upsert_147'
+    }).catch(err => console.warn('[Persistent Upsert Note]', err));
+
     // Cache current weeks state so it permanently survives offline / reloads
     const cacheKey = `akk_admin_schedule_cache_${selectedYear}_${effectiveMonth}`;
     try {
@@ -1490,7 +1758,7 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
             )}
 
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setIsUploadConfigModalOpen(true)}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition cursor-pointer"
               title="Unggah spreadsheet baru (.xlsx / .csv)"
             >
@@ -2016,7 +2284,7 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
                           <th className="p-3 text-center w-24">AKSI</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                      <tbody className="divide-y-2 divide-slate-300 dark:divide-slate-700 font-medium">
                         {activeDayObj.pengiriman.map((p: DeliveryAssignment, pIdx: number) => {
                           const standardArea = standardizeAreaName(p.area);
                           const isLuarPulau = standardArea.includes('DENPASAR') || standardArea.includes('SINGARAJA') || standardArea.includes('NEGARA') || standardArea.includes('GIANYAR') || standardArea.includes('TABANAN') || standardArea.includes('KUTA') || standardArea.includes('BALI');
@@ -2032,7 +2300,7 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
                           return (
                             <tr
                               key={`cal-detail-${pIdx}-${p.driver}-${p.armada}`}
-                              className={`hover:bg-slate-50 dark:hover:bg-slate-800/60 transition ${
+                              className={`hover:bg-slate-50 dark:hover:bg-slate-800/60 transition border-b-2 border-slate-300 dark:border-slate-700 ${
                                 isLuarPulau ? 'bg-blue-50/30 dark:bg-blue-950/20' : ''
                               }`}
                             >
@@ -2289,6 +2557,243 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>Simpan Perubahan Permanen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Configuration Modal (Image 2 Style) */}
+      {isUploadConfigModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-2xl w-full shadow-2xl space-y-5 my-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Konfigurasi Impor &amp; Pembaruan Jadwal Spreadsheet</h3>
+                  <p className="text-xs text-slate-400">Pilih periode data, mode impor, dan file spreadsheet resmi AKK</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsUploadConfigModalOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">Bulan Data</label>
+                <select
+                  value={importMonth}
+                  onChange={(e) => setImportMonth(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl p-2.5 focus:outline-none focus:border-emerald-500"
+                >
+                  {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'].map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">Tahun Data</label>
+                <input
+                  type="text"
+                  value={importYear}
+                  onChange={(e) => setImportYear(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl p-2.5 focus:outline-none focus:border-emerald-500 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">Mode Import</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label
+                  onClick={() => setImportMode('tambahkan')}
+                  className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition ${
+                    importMode === 'tambahkan'
+                      ? 'bg-emerald-500/10 border-emerald-500/50 text-white font-bold'
+                      : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="importMode"
+                    checked={importMode === 'tambahkan'}
+                    onChange={() => setImportMode('tambahkan')}
+                    className="text-emerald-500 mt-0.5"
+                  />
+                  <div>
+                    <span className="block font-bold text-slate-200">Tambahkan data</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Data bulan yang sama tidak dihapus.</span>
+                  </div>
+                </label>
+
+                <label
+                  onClick={() => setImportMode('ganti')}
+                  className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition ${
+                    importMode === 'ganti'
+                      ? 'bg-amber-500/10 border-amber-500/50 text-white font-bold'
+                      : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="importMode"
+                    checked={importMode === 'ganti'}
+                    onChange={() => setImportMode('ganti')}
+                    className="text-amber-500 mt-0.5"
+                  />
+                  <div>
+                    <span className="block font-bold text-amber-300">Ganti data bulan ini</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Data lama periode sama dihapus lalu diimport ulang.</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">File Spreadsheet / Penjualan</label>
+                <button
+                  type="button"
+                  onClick={downloadScheduleTemplate}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 transition cursor-pointer bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1 rounded-lg border border-emerald-500/30 shadow-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Template Excel</span>
+                </button>
+              </div>
+              <input
+                type="file"
+                ref={modalFileInputRef}
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setSelectedUploadFile(f);
+                }}
+              />
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => modalFileInputRef.current?.click()}
+                    className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shrink-0 cursor-pointer transition shadow-sm"
+                  >
+                    Choose File
+                  </button>
+                  <span className="text-xs text-slate-300 truncate font-mono">
+                    {selectedUploadFile ? selectedUploadFile.name : 'No file chosen'}
+                  </span>
+                </div>
+                {selectedUploadFile && (
+                  <span className="text-[10px] font-bold text-emerald-400 shrink-0">Siap Proses</span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Format didukung: .xls, .xlsx, .csv. Maksimal 10MB. Sistem akan menampilkan pratinjau template terbaca sebelum memperbarui jadwal.
+              </p>
+            </div>
+
+            {/* Template Terbaca Info Card */}
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Struktur Template Terbaca Otomatis:</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">Sheet "ALL" / Roster DC</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-300">
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">✅ Kolom Tanggal / Hari</div>
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">✅ Kolom Area / Tujuan</div>
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">✅ Kolom Plat &amp; Supir</div>
+                <div className="bg-slate-900 p-2 rounded border border-slate-800">✅ Kolom Helper &amp; Muatan</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUploadConfigModalOpen(false);
+                  setIsHistoryModalOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                Lihat Riwayat Upload
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsUploadConfigModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedUploadFile) {
+                      modalFileInputRef.current?.click();
+                      return;
+                    }
+                    setIsUploadConfigModalOpen(false);
+                    processFile(selectedUploadFile);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Preview Dulu &amp; Perbarui Jadwal</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Riwayat Upload Modal */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white">Riwayat Unggah Spreadsheet Jadwal</h3>
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs text-slate-300">
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-white">Roster_DC_Banyuwangi_Jan2026.xlsx</div>
+                  <div className="text-[10px] text-slate-400">Diunggah 09 Okt 2026, 21:30 WIB • 121 Baris Tervalidasi</div>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300">Sukses</span>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-white">Schedule_Sheet_ALL_v2.csv</div>
+                  <div className="text-[10px] text-slate-400">Diunggah 05 Okt 2026, 14:15 WIB • 115 Baris Tervalidasi</div>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300">Sukses</span>
+              </div>
+            </div>
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                Tutup
               </button>
             </div>
           </div>
@@ -2694,6 +3199,250 @@ export const GoogleSheetsAdminScheduleView: React.FC<GoogleSheetsAdminScheduleVi
           setTimeout(() => setSyncSuccessMessage(null), 8000);
         }}
       />
+
+      {/* Excel Top 5 Rows Preview Modal */}
+      {isExcelPreviewModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+          <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-5 shadow-2xl my-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center border border-blue-500/30">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Pratinjau Spreadsheet (Semua Data sampai Bawah)</h3>
+                  <p className="text-xs text-slate-400">Verifikasi isi file sebelum diproses permanen ke sistem • {previewFile?.name} ({previewTotalRows} baris total, Sheet: {previewSheetName})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExcelPreviewModalOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/25 text-blue-200">
+                <p className="font-semibold">💡 Pastikan data di bawah ini sesuai dengan format roster operasional sebelum melanjutkan pemrosesan jadwal.</p>
+              </div>
+
+              <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-[72vh]">
+                <table className="w-full text-left border-collapse text-[11px]">
+                  <thead>
+                    <tr className="bg-slate-900 border-b border-slate-800 text-slate-400">
+                      <th className="p-3 font-bold border-r border-slate-800 w-12 text-center">#</th>
+                      {previewHeaders.map((h, i) => (
+                        <th key={i} className="p-3 font-bold border-r border-slate-800 whitespace-nowrap">{h || `Kolom ${i+1}`}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 text-slate-200">
+                    {previewTopRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={previewHeaders.length + 1} className="p-6 text-center text-slate-500 italic">Tidak ada data baris ditemukan.</td>
+                      </tr>
+                    ) : (() => {
+                      let activeDate = '';
+                      return previewTopRows.map((row, rIdx) => {
+                        const isSeparator = row.some(cell => String(cell).includes('---'));
+                        if (isSeparator) {
+                          return (
+                            <tr key={rIdx} className="bg-slate-900 border-y-2 border-slate-700 text-slate-400">
+                              <td colSpan={previewHeaders.length + 1} className="py-2.5 px-3 text-center font-mono text-[11px] font-black tracking-widest bg-slate-950/90 text-slate-400 border-y-2 border-slate-700">
+                                ─────── PEMBATAS TANGGAL &amp; PENGELOMPOKAN PENGIRIMAN ───────
+                              </td>
+                            </tr>
+                          );
+                        }
+                        const firstCell = row[0] !== undefined && row[0] !== null ? String(row[0]).trim() : '';
+                        if (firstCell && !firstCell.startsWith('-')) {
+                          activeDate = firstCell;
+                        }
+                        const hasExplicitDate = Boolean(firstCell && !firstCell.startsWith('-'));
+
+                        return (
+                          <tr key={rIdx} className={`hover:bg-slate-900/80 transition border-b border-slate-800 ${hasExplicitDate ? 'border-t-2 border-slate-700 bg-slate-900/40' : ''}`}>
+                            <td className="p-3 font-mono text-slate-500 text-center border-r border-slate-800">{rIdx + 1}</td>
+                            {previewHeaders.map((h, cIdx) => {
+                              const cellVal = row[cIdx];
+                              const hasVal = cellVal !== undefined && cellVal !== null && String(cellVal).trim() !== '';
+                              const hUpper = (h || '').toUpperCase();
+
+                              return (
+                                <td key={cIdx} className="p-3 border-r border-slate-800 whitespace-nowrap">
+                                  {hasVal ? (
+                                    <span className={
+                                      hUpper.includes('TANGGAL')
+                                        ? "font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
+                                        : hUpper.includes('DRIVER') || hUpper.includes('SUPIR')
+                                        ? "font-bold text-white"
+                                        : hUpper.includes('AREA')
+                                        ? "font-semibold text-amber-300"
+                                        : hUpper.includes('ARMADA')
+                                        ? "font-mono font-bold text-blue-300"
+                                        : ""
+                                    }>
+                                      {String(cellVal)}
+                                    </span>
+                                  ) : (
+                                    hUpper.includes('TANGGAL') ? (
+                                      <span className="text-slate-500 text-[10px] italic">
+                                        ↳ {activeDate || 'sesi hari'}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-600">-</span>
+                                    )
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsExcelPreviewModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (previewFile) executeFinalUpload(previewFile);
+                }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs shadow-md shadow-emerald-600/30 cursor-pointer active:scale-95 transition"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Lanjutkan Proses &amp; Validasi ({previewTotalRows} Baris)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. Spreadsheet Schema Validation Error / Warning Modal */}
+      {schemaValidationError && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-slate-900 border border-rose-500/40 rounded-3xl p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-rose-400">
+                <AlertTriangle className="w-6 h-6 shrink-0 animate-bounce" />
+                <h3 className="text-base font-black text-white">{schemaValidationError.error || 'Format Kolom Tidak Sesuai'}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSchemaValidationError(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white bg-slate-800/80 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-rose-200 space-y-1.5">
+                <p className="font-bold">{schemaValidationError.message}</p>
+                {schemaValidationError.missingColumns?.length > 0 && (
+                  <p className="text-[11px] text-rose-300">
+                    <span className="font-semibold">Kolom Wajib yang Belum Ada:</span> {schemaValidationError.missingColumns.join(', ')}
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-1.5">
+                <span className="font-bold text-amber-400 block">📌 Panduan Format Kolom Standar:</span>
+                <p className="font-mono text-[11px] text-slate-300 bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                  {schemaValidationError.correctFormat}
+                </p>
+              </div>
+
+              {schemaValidationError.detectedHeaders?.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="font-semibold text-slate-400 block">Header yang Terdeteksi di File Anda:</span>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {schemaValidationError.detectedHeaders.map((h: string, idx: number) => (
+                      <span key={idx} className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-mono text-[10px]">
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSchemaValidationError(null)}
+                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition"
+              >
+                Tutup &amp; Pilih File Lain
+              </button>
+              <button
+                type="button"
+                onClick={downloadScheduleTemplate}
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/30 cursor-pointer active:scale-95 transition"
+              >
+                <Download className="w-4 h-4" />
+                <span>Unduh Template .XLSX Standar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Toast Notification for Upload Validation */}
+      {uploadToast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md w-full bg-slate-900 dark:bg-slate-900 border border-slate-700 dark:border-slate-700 text-white rounded-2xl p-4 shadow-2xl flex items-start gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className={`p-2.5 rounded-xl shrink-0 ${uploadToast.type === 'error' ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+            {uploadToast.type === 'error' ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+          </div>
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-black uppercase tracking-wider ${uploadToast.type === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                {uploadToast.type === 'error' ? 'Gagal Unggah Spreadsheet' : 'Berhasil'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setUploadToast(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                title="Tutup Notifikasi"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 font-medium">{uploadToast.message}</p>
+            {uploadToast.type === 'error' && (
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadScheduleTemplate}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh Template Excel Benar</span>
+                </button>
+              </div>
+            )}
+            {/* Auto-dismiss timer indicator */}
+            <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden mt-2">
+              <div
+                className={`h-full ${uploadToast.type === 'error' ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse`}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

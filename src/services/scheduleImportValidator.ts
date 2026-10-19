@@ -558,23 +558,28 @@ export const scheduleImportValidator = {
         storeCategory: 'Distribution Hub'
       };
 
-      // Dynamic Fleet Resolution with exact Sheet code matching
-      let matchedFleet = currentFleets.find(f => 
-        (f.initialCode && item.armadaName.toUpperCase() === f.initialCode.toUpperCase()) ||
-        (f.initialCode && item.armadaName.toUpperCase().includes(f.initialCode.toUpperCase())) ||
-        item.armadaName.toUpperCase().includes(f.plateNumber.replace(/\s+/g, '').toUpperCase())
-      );
+      // Dynamic Fleet Resolution with exact Sheet code matching (HANYA armada resmi PT AKK non-AKK)
+      const cleanArmada = (item.armadaName || '').trim().toUpperCase();
+      let matchedFleet = currentFleets.find(f => {
+        if (!f.plateNumber || f.plateNumber.toUpperCase().endsWith('AKK')) return false;
+        const init = (f.initialCode || '').toUpperCase();
+        return (
+          init === cleanArmada ||
+          init.includes(cleanArmada) ||
+          cleanArmada.includes(init) ||
+          f.plateNumber.replace(/\s+/g, '').toUpperCase().includes(cleanArmada.replace(/\s+/g, ''))
+        );
+      });
 
-      if (!matchedFleet && item.armadaName && item.armadaName !== '-') {
-        matchedFleet = logisticsStore.addFleet({
-          initialCode: item.armadaName,
-          plateNumber: item.armadaName.includes(' ') ? item.armadaName : `P ${Math.floor(1000 + Math.random() * 8999)} AKK`,
-          vehicleType: item.armadaName.toLowerCase().includes('pickup') || item.armadaName.toLowerCase().includes('l300') ? 'Pick Up Box' : 'Engkel STD',
-          status: 'available'
-        });
-        currentFleets.push(matchedFleet);
+      // Mapping kode rute spreadsheet seperti DS1, DS2, DS3, DS4, DS5, NL1, NL2, NS1, NS2, NS3, NP1, NP3
+      if (!matchedFleet && cleanArmada && cleanArmada !== '-') {
+        matchedFleet = currentFleets.find(f => {
+          if (!f.plateNumber || f.plateNumber.toUpperCase().endsWith('AKK')) return false;
+          const init = (f.initialCode || '').toUpperCase();
+          return init.split(/[\s/]+/).some(part => part && cleanArmada.includes(part));
+        }) || currentFleets.find(f => !f.plateNumber.toUpperCase().endsWith('AKK')) || currentFleets[0];
       } else if (!matchedFleet) {
-        matchedFleet = currentFleets[0];
+        matchedFleet = currentFleets.find(f => !f.plateNumber.toUpperCase().endsWith('AKK')) || currentFleets[0];
       }
 
       // Dynamic Driver Resolution with exact Sheet name matching

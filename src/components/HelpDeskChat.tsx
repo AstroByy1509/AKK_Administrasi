@@ -420,6 +420,9 @@ interface HelpDeskChatProps {
 }
 
 export const HelpDeskChat: React.FC<HelpDeskChatProps> = ({ activeTab, user }) => {
+  if (activeTab === 'driver_portal') {
+    return null;
+  }
   const [isOpen, setIsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; isSummary?: boolean }[]>([]);
@@ -439,7 +442,7 @@ export const HelpDeskChat: React.FC<HelpDeskChatProps> = ({ activeTab, user }) =
 
   // Determine if user has Admin privileges
   const currentUser = user || logisticsStore.getCurrentUser();
-  const isAdmin = currentUser.role === 'super_admin' || currentUser.role.includes('admin') || currentUser.role === 'dispatcher';
+  const isAdmin = currentUser.role === 'super_admin' || currentUser.role.includes('admin') || currentUser.role === 'spv_logistik';
 
   const greeting = 'Halo! Saya asisten virtual operasional PT AKK. Saya bisa membantu Anda terkait SOP, formulir operasional, atau status armada. Apa yang bisa saya bantu?';
 
