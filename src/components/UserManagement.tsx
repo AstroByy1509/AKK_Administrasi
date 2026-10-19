@@ -3,10 +3,11 @@ import {
   Users, UserCheck, UserX, Clock, ShieldAlert, CheckCircle2, XCircle, 
   Search, Filter, Plus, Shield, User, Building, Phone, Mail, Calendar, 
   AlertTriangle, Edit3, Lock, Save, UserCog, ShieldCheck, X, Key, Copy, Check,
-  ChevronDown, ChevronRight, Settings, Eye, EyeOff
+  ChevronDown, ChevronRight, Settings, Eye, EyeOff, BarChart3
 } from 'lucide-react';
 import { UserProfile, UserRole, UserApprovalStatus, UserPermissions } from '../types';
 import { logisticsStore } from '../services/store';
+
 
 const MODULE_DEFINITIONS = [
   {
@@ -87,10 +88,11 @@ const MODULE_DEFINITIONS = [
   },
   {
     id: 'sistem_pengguna',
-    name: 'Sistem Pengguna',
+    name: 'Sistem Pengguna & Akses Eksekutif',
     subMenus: [
       { id: 'daftar_pengguna', name: 'Daftar Pengguna Sistem' },
       { id: 'manajemen_hak_akses', name: 'Manajemen Hak Akses & Role' },
+      { id: 'dashboard_eksekutif', name: 'Dashboard Eksekutif (Akses Terbatas)' },
       { id: 'log_aktivitas_sistem', name: 'Log Aktivitas Sistem' },
       { id: 'persetujuan_akun', name: 'Persetujuan Akun (Approval)' }
     ]
@@ -1427,6 +1429,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ onNavigateToE2E 
           </div>
         </div>
       )}
+
 
       {/* ================= IN-PAGE POP-UP MODAL NOTIFICATION ================= */}
       {pageModalNotification && (

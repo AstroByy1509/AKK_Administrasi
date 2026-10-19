@@ -5,6 +5,21 @@ export const canAccess = (user: UserProfile, moduleId: string, subMenuId?: strin
   if (user.role === 'super_admin') return true;
   if (user.status !== 'approved') return false;
 
+  // Special check for Executive Dashboard ('dashboard') governed by user permissions under sistem_pengguna -> dashboard_eksekutif
+  if (moduleId === 'dashboard') {
+    if (user.permissions && user.permissions.modules) {
+      const sysMod = user.permissions.modules['sistem_pengguna'];
+      if (sysMod && sysMod.enabled) {
+        const sub = sysMod.subMenus?.['dashboard_eksekutif'];
+        if (sub && sub !== 'none') return true;
+        if (sub === 'none') return false;
+      }
+    }
+    // Default roles restriction for Executive Dashboard: Drivers, Helpers, Security, General Staff cannot view unless explicitly granted
+    if (user.role === 'driver' || user.role === 'crew_helper' || user.role === 'security') return false;
+    return true;
+  }
+
   // Granular permissions check if configured
   if (user.permissions && user.permissions.modules) {
     const modulePerms = user.permissions.modules[moduleId];

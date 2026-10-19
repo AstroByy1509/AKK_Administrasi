@@ -30,8 +30,9 @@ import { NetworkStatusBanner } from './components/NetworkStatusBanner';
 import { RealtimeShipmentListener } from './components/RealtimeShipmentListener';
 import { RetailStore, UserProfile } from './types';
 import { logisticsStore } from './services/store';
-import { ShieldCheck, Clock, AlertTriangle, LogIn, ChevronLeft, ChevronRight, Bell, Smartphone } from 'lucide-react';
+import { ShieldCheck, Clock, AlertTriangle, LogIn, ChevronLeft, ChevronRight, Bell, Smartphone, Lock } from 'lucide-react';
 import { useToast } from './context/ToastContext';
+import { canAccess } from './utils/rbac';
 
 const LiveClockBadge: React.FC = () => {
   const [time, setTime] = useState(() =>
@@ -321,7 +322,36 @@ export default function App() {
           currentUser.status === 'pending' ? 'pt-4' : 'pt-18 lg:pt-6'
         }`}>
           {currentTab === 'dashboard' && (
-            <ExecutiveDashboard onNavigate={(tab) => setCurrentTab(tab as NavTab)} />
+            canAccess(currentUser, 'dashboard') ? (
+              <ExecutiveDashboard onNavigate={(tab) => setCurrentTab(tab as NavTab)} />
+            ) : (
+              <div className="max-w-2xl mx-auto mt-16 p-8 rounded-2xl bg-slate-900 border border-amber-500/30 text-center space-y-6 shadow-2xl">
+                <div className="w-16 h-16 mx-auto rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Lock className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-xl font-bold text-amber-300">Akses Terbatas: Dashboard Eksekutif</h2>
+                  <p className="text-sm text-slate-300">
+                    Akun Anda (<span className="text-amber-400 font-semibold">{currentUser.fullName}</span> / <span className="text-cyan-400">{currentUser.role}</span>) tidak memiliki izin untuk melihat Dashboard Eksekutif.
+                    Fitur ini dikhususkan untuk manajemen eksekutif dan akun dengan hak akses khusus yang dikonfigurasi melalui Manajemen Hak Akses.
+                  </p>
+                </div>
+                <div className="pt-4 flex justify-center gap-3">
+                  <button
+                    onClick={() => setCurrentTab('operational_dashboard')}
+                    className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs transition cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.4)]"
+                  >
+                    Ke Dashboard Operasional &rarr;
+                  </button>
+                  <button
+                    onClick={() => setCurrentTab('users')}
+                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition cursor-pointer border border-slate-700"
+                  >
+                    Buka Manajemen Hak Akses
+                  </button>
+                </div>
+              </div>
+            )
           )}
 
           {currentTab === 'operational_dashboard' && (
@@ -364,7 +394,9 @@ export default function App() {
           )}
 
           {currentTab === 'users' && (
-            <UserManagement onNavigateToE2E={() => setCurrentTab('e2e_testing')} />
+            <UserManagement
+              onNavigateToE2E={() => setCurrentTab('e2e_testing')}
+            />
           )}
 
           {currentTab === 'tracking_eval' && (

@@ -883,7 +883,7 @@ create policy "Tracking logs accessible by authenticated users"
                             ) : (
                               <div className="space-y-1">
                                 {item.issues.map((iss, i) => (
-                                  <div key={i} className="text-[11px] text-amber-300 leading-tight">
+                                  <div key={`issue-${i}`} className="text-[11px] text-amber-300 leading-tight">
                                     • {iss}
                                   </div>
                                 ))}

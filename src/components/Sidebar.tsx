@@ -402,36 +402,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* ============================================================ */}
         {/* MENU UTAMA PALING ATAS: DASHBOARD                            */}
         {/* ============================================================ */}
-        <div className="space-y-1 pb-2 border-b border-slate-800/70">
-          {!isMinimized && (
-            <div className="flex items-center justify-between px-2 mb-1">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5 neon-text-amber">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Dashboard Utama</span>
-              </span>
-              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.25)]">
-                Rangkuman
-              </span>
-            </div>
-          )}
+        {canAccess(currentUser, 'dashboard') && (
+          <div className="space-y-1 pb-2 border-b border-slate-800/70">
+            {!isMinimized && (
+              <div className="flex items-center justify-between px-2 mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5 neon-text-amber">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Dashboard Utama</span>
+                </span>
+                <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.25)]">
+                  Rangkuman
+                </span>
+              </div>
+            )}
 
-          {renderNavItem(
-            'dashboard',
-            'Dashboard Eksekutif',
-            <LayoutDashboard className="w-4 h-4" />,
-            !isMinimized ? (
-              <span
-                className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                  currentTab === 'dashboard'
-                    ? 'bg-slate-950/60 text-amber-300 font-black border border-amber-400/50'
-                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                }`}
-              >
-                Ops + Sales
-              </span>
-            ) : undefined
-          )}
-        </div>
+            {renderNavItem(
+              'dashboard',
+              'Dashboard Eksekutif',
+              <LayoutDashboard className="w-4 h-4" />,
+              !isMinimized ? (
+                <span
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                    currentTab === 'dashboard'
+                      ? 'bg-slate-950/60 text-amber-300 font-black border border-amber-400/50'
+                      : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                  }`}
+                >
+                  Ops + Sales
+                </span>
+              ) : undefined
+            )}
+          </div>
+        )}
 
         {/* ============================================================ */}
         {/* BAGIAN 1: LOGISTIK & PENGIRIMAN                             */}

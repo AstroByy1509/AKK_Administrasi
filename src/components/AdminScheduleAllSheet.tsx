@@ -15,15 +15,15 @@ export const AdminScheduleAllSheet: React.FC = () => {
         <thead>
           <tr className="bg-slate-800 text-left">
             {tableData[0]?.map((header, i) => (
-              <th key={i} className="p-2 border border-slate-700">{header}</th>
+              <th key={`header-${i}`} className="p-2 border border-slate-700">{header}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {tableData.slice(1).map((row, i) => (
-            <tr key={i} className="hover:bg-slate-800/50">
+            <tr key={`row-${i}`} className="hover:bg-slate-800/50">
               {row.map((cell, j) => (
-                <td key={j} className="p-1.5 border border-slate-700 whitespace-nowrap">{cell}</td>
+                <td key={`cell-${i}-${j}`} className="p-1.5 border border-slate-700 whitespace-nowrap">{cell}</td>
               ))}
             </tr>
           ))}
