@@ -509,7 +509,11 @@ export default function App() {
           )}
 
           {currentTab === 'driver_portal' && (
-            <DriverMobileView onBackToPortal={() => setCurrentTab('dashboard')} />
+            <DriverMobileView
+              currentUser={currentUser}
+              initialDriverId={logisticsStore.getActiveDriverCrew()?.id}
+              onBackToPortal={() => setCurrentTab('dashboard')}
+            />
           )}
 
           {currentTab === 'architecture' && (

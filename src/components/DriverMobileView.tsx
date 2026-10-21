@@ -68,7 +68,8 @@ import {
   OutboundWaybill,
   ChecklistItemCategory,
   DriverShiftCheckin,
-  UserRole
+  UserRole,
+  UserProfile
 } from '../types';
 import { logisticsStore } from '../services/store';
 import { driverReportService, DriverHelperReport } from '../services/driverReportService';
@@ -88,39 +89,71 @@ import { DriverGmapsShareModal } from './DriverGmapsShareModal';
 interface DriverMobileViewProps {
   onBackToPortal?: () => void;
   initialDriverId?: string;
+  currentUser?: UserProfile;
 }
 
 export type DriverPortalTab = 'deliveries' | 'checklist' | 'surat_jalan' | 'history' | 'profile';
 
 export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
   onBackToPortal,
-  initialDriverId
+  initialDriverId,
+  currentUser: propUser
 }) => {
   const { addNotification } = useToast();
+
+  // Active User Profile synchronization - Single Source of Truth
+  const [currentUser, setCurrentUser] = useState<UserProfile>(() => propUser || logisticsStore.getCurrentUser());
+
+  // Real-time Display Name & Avatar matching the account name
+  const portalDisplayName = useMemo(() => {
+    return currentUser?.fullName || logisticsStore.getPortalDisplayName();
+  }, [currentUser]);
+
+  const portalInitials = useMemo(() => {
+    const name = portalDisplayName.trim();
+    if (!name) return 'DR';
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  }, [portalDisplayName]);
 
   // State
   const [crews, setCrews] = useState<Crew[]>(logisticsStore.getCrews());
   const [fleets, setFleets] = useState<Fleet[]>(logisticsStore.getFleets());
 
-  // Driver Authentication Session (No Google login required for driver app)
-  const [isDriverLoggedIn, setIsDriverLoggedIn] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('akk_driver_auth_session');
-      return !!saved;
-    } catch {
-      return false;
-    }
-  });
+  // Supir yang tersinkronisasi otomatis dengan akun login
+  const syncedCrew = useMemo(() => {
+    return logisticsStore.getActiveDriverCrew();
+  }, [currentUser, crews]);
 
   const [loggedInDriver, setLoggedInDriver] = useState<Crew | null>(() => {
-    try {
-      const saved = localStorage.getItem('akk_driver_auth_session');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {}
-    return null;
+    return syncedCrew || null;
   });
+
+  const [isDriverLoggedIn, setIsDriverLoggedIn] = useState<boolean>(() => {
+    const user = propUser || logisticsStore.getCurrentUser();
+    return !!user && user.id !== 'guest';
+  });
+
+  const [selectedDriverId, setSelectedDriverId] = useState<string>(() => {
+    if (initialDriverId) return initialDriverId;
+    if (syncedCrew) return syncedCrew.id;
+    return crews[0]?.id || '';
+  });
+
+  // Sinkronisasi otomatis saat user prop berganti atau login/switch akun terjadi
+  useEffect(() => {
+    const active = propUser || logisticsStore.getCurrentUser();
+    setCurrentUser(active);
+    const matched = logisticsStore.getActiveDriverCrew();
+    if (matched) {
+      setLoggedInDriver(matched);
+      setSelectedDriverId(matched.id);
+      setIsDriverLoggedIn(true);
+    }
+  }, [propUser]);
 
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [loginEmail, setLoginEmail] = useState('');
@@ -138,13 +171,6 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
     department: 'Gudang Distribusi Packaging Banyuwangi',
     password: '',
     confirmPassword: ''
-  });
-
-  const [selectedDriverId, setSelectedDriverId] = useState<string>(() => {
-    if (loggedInDriver) return loggedInDriver.id;
-    if (initialDriverId) return initialDriverId;
-    const defaultDriver = logisticsStore.getCrews().find(c => c.role.includes('Driver'));
-    return defaultDriver ? defaultDriver.id : '';
   });
 
   const handleDriverLoginSubmit = (e: React.FormEvent) => {
@@ -455,8 +481,21 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
 
   // Active Driver profile
   const currentDriver = useMemo(() => {
-    return crews.find(c => c.id === selectedDriverId) || crews[0] || null;
-  }, [crews, selectedDriverId]);
+    const matched = crews.find(c => c.id === selectedDriverId);
+    if (matched) {
+      return {
+        ...matched,
+        name: portalDisplayName
+      };
+    }
+    if (syncedCrew) {
+      return {
+        ...syncedCrew,
+        name: portalDisplayName
+      };
+    }
+    return crews[0] ? { ...crews[0], name: portalDisplayName } : null;
+  }, [crews, selectedDriverId, syncedCrew, portalDisplayName]);
 
   // Assigned Fleet for current driver
   const assignedFleet = useMemo(() => {
@@ -521,12 +560,20 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
   // React to store updates
   useEffect(() => {
     const unsub = logisticsStore.subscribe(() => {
+      const active = logisticsStore.getCurrentUser();
+      setCurrentUser(active);
+      const matched = logisticsStore.getActiveDriverCrew();
+      if (matched) {
+        setLoggedInDriver(matched);
+        setSelectedDriverId(matched.id);
+        setIsDriverLoggedIn(true);
+      }
       setCrews(logisticsStore.getCrews());
       setFleets(logisticsStore.getFleets());
       loadDeliveries(true);
     });
     return unsub;
-  }, [selectedDriverId]);
+  }, []);
 
   // ⚡ Supabase Realtime Live Synchronization Layer
   useEffect(() => {
@@ -556,7 +603,6 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
   }, [selectedDriverId]);
 
   // Cek peran user saat ini untuk hak akses khusus Super Admin
-  const currentUser = logisticsStore.getCurrentUser();
   const isSuperAdmin = currentUser?.role === 'super_admin';
 
   // 📦 Pemisahan tugas pengiriman dengan progresi jadwal otomatis:
@@ -1088,7 +1134,7 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
                 </span>
               </div>
               <h1 className="text-sm font-bold text-white truncate">
-                {currentDriver?.name || 'Driver Operasional'}
+                {portalDisplayName}
               </h1>
             </div>
           </div>
@@ -1164,7 +1210,7 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
             <span className="text-[10px] text-slate-400 font-semibold uppercase">Supir:</span>
             <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-lg px-2.5 py-1 font-bold truncate">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
-              <span className="truncate">{currentUser?.fullName || loggedInDriver?.name || 'Zainul Agustiar'}</span>
+              <span className="truncate">{portalDisplayName}</span>
               <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0 font-mono">
                 Akun Terverifikasi
               </span>
@@ -1326,14 +1372,14 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
               <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-10 h-10 rounded-xl neu-flat-sm flex items-center justify-center text-amber-400 shrink-0 font-black">
-                    {loggedInDriver?.name ? loggedInDriver.name.substring(0, 2).toUpperCase() : 'DR'}
+                    {portalInitials}
                   </div>
                   <div className="min-w-0">
                     <div className="font-black text-xs text-white truncate">
-                      {loggedInDriver?.name || currentDriver?.name || 'Driver AKK'}
+                      {portalDisplayName}
                     </div>
                     <div className="text-[10px] text-slate-400 truncate">
-                      Armada: <span className="text-amber-400 font-bold">{assignedFleet?.plateNumber || 'L 300 AKK'}</span> · {assignedFleet?.vehicleType || 'Colt Diesel'}
+                      Armada: <span className="text-amber-400 font-bold">{assignedFleet?.plateNumber || 'P 8509 VQ'}</span> · {assignedFleet?.vehicleType || 'Pick Up Box'}
                     </div>
                   </div>
                 </div>
@@ -2619,11 +2665,13 @@ export const DriverMobileView: React.FC<DriverMobileViewProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xl">
-                  {currentDriver?.name?.charAt(0) || 'D'}
+                  {portalInitials}
                 </div>
                 <div>
-                  <h2 className="text-base font-black text-white">{currentDriver?.name}</h2>
-                  <div className="text-xs text-slate-400 mt-0.5">{currentDriver?.role}</div>
+                  <h2 className="text-base font-black text-white">{portalDisplayName}</h2>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    {currentUser?.role === 'driver' ? 'Kru Supir Utama' : (currentUser?.role || currentDriver?.role || 'Pengemudi')}
+                  </div>
                   <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                     <CheckCircle2 className="w-3 h-3" />
                     <span>Status: {currentDriver?.status === 'on-duty' ? 'On-Duty' : 'Available'}</span>

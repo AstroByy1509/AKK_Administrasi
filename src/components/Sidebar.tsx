@@ -167,6 +167,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, []);
 
+  useEffect(() => {
+    return logisticsStore.subscribe(() => {
+      setCurrentUser(logisticsStore.getCurrentUser());
+      setPendingUsersCount(logisticsStore.getPendingUsersCount());
+    });
+  }, []);
+
   const handleTabClick = (tabId: NavTab) => {
     onSelectTab(tabId);
     setIsMobileOpen(false);
@@ -1040,3 +1047,5 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
+
+export default Sidebar;

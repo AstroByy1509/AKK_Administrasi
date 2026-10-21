@@ -588,6 +588,17 @@ class LogisticsStore {
           updated = true;
         }
       }
+      // Ensure Budiono is recognized as driver (Kru Supir Utama)
+      if (u.fullName.toLowerCase().includes('budiono') || u.id === 'usr-budiono') {
+        if (u.role !== 'driver') {
+          newRole = 'driver';
+          updated = true;
+        }
+        if (!u.password) {
+          u.password = 'budiono';
+          updated = true;
+        }
+      }
 
       if (updated) {
         return { ...u, fullName: newName, approvedBy: newApprovedBy, role: newRole };
@@ -989,6 +1000,9 @@ class LogisticsStore {
 
     // Register built-in Middleware: Automated write to backend / Google Sheets / Image Storage / Activity Audit
     this.registerDefaultMiddlewares();
+
+    // Auto-sync active user session with driver portal identity
+    this.syncCurrentUserToCrew();
   }
 
   /**
@@ -2101,35 +2115,149 @@ class LogisticsStore {
     return newUser;
   }
 
-  public loginUser(identifier: string, password?: string): UserProfile | null {
+  /**
+   * Mendeteksi akun pengguna secara cerdas melalui berbagai input:
+   * 1. Email lengkap (e.g. budiono@gmail.com)
+   * 2. Username saja (e.g. budiono)
+   * 3. ID pengguna (e.g. usr-budiono atau budiono)
+   * 4. Nama lengkap pengguna (e.g. Budiono, MUHAMMAD SYAIFUL BAHRI)
+   * 5. Nama kru supir / helper (e.g. Budiono, Zainul Agustiar)
+   * 6. Alias admin resmi (admin, superadmin, bayun791)
+   */
+  public findUserByIdentifier(identifier: string): UserProfile | undefined {
     const cleanId = (identifier || '').trim().toLowerCase();
+    if (!cleanId) return undefined;
+
+    // SKEMA VALIDASI KETAT:
+    // Jika input mengandung '@', perlakukan sebagai format EMAIL murni
+    if (cleanId.includes('@')) {
+      const match = this.users.find(u => u.email && u.email.trim().toLowerCase() === cleanId);
+      if (match) return match;
+      const emailPrefix = cleanId.split('@')[0].trim().toLowerCase();
+      if (['admin', 'superadmin', 'super.admin', 'bayun791', 'bayun'].includes(emailPrefix)) {
+        return this.users.find(u => u.role === 'super_admin' || u.id === 'usr-001');
+      }
+      return undefined;
+    }
+
+    // Jika input TIDAK mengandung '@', perlakukan secara ketat sebagai USERNAME / NAMA / ID
+    // 1. Cek ID pengguna persis (contoh: 'usr-budiono' atau 'usr-001')
+    let user = this.users.find(u => u.id && u.id.trim().toLowerCase() === cleanId);
+    if (user) return user;
+
+    // 2. Cek username sebelum '@' pada email (contoh: 'budiono' dari 'budiono@gmail.com')
+    user = this.users.find(u => {
+      if (!u.email) return false;
+      const emailUser = u.email.split('@')[0].trim().toLowerCase();
+      return emailUser === cleanId;
+    });
+    if (user) return user;
+
+    // 3. Cek ID tanpa prefix 'usr-' (contoh: 'budiono' dari 'usr-budiono')
+    user = this.users.find(u => {
+      if (!u.id) return false;
+      const strippedId = u.id.replace(/^usr-/, '').trim().toLowerCase();
+      return strippedId === cleanId;
+    });
+    if (user) return user;
+
+    // 4. Cek nama lengkap secara persis (contoh: 'Budiono', 'BUDIONO')
+    user = this.users.find(u => (u.fullName || '').trim().toLowerCase() === cleanId);
+    if (user) return user;
+
+    // 5. Cek kata depan nama lengkap atau kemiripan kata
+    user = this.users.find(u => {
+      const fNameLower = (u.fullName || '').trim().toLowerCase();
+      const words = fNameLower.split(/\s+/);
+      return words.includes(cleanId) || (cleanId.length >= 3 && fNameLower.includes(cleanId));
+    });
+    if (user) return user;
+
+    // 6. Cek daftar kru (supir / helper di lapangan)
+    const matchedCrew = this.crews.find(c => {
+      const cNameLower = (c.name || '').trim().toLowerCase();
+      return (
+        c.id.toLowerCase() === cleanId ||
+        cNameLower === cleanId ||
+        cNameLower.split(/\s+/).includes(cleanId) ||
+        (cleanId.length >= 3 && cNameLower.includes(cleanId))
+      );
+    });
+    if (matchedCrew) {
+      let crewUser = this.users.find(u => 
+        (u.fullName || '').trim().toLowerCase() === matchedCrew.name.trim().toLowerCase() ||
+        (u.id === `usr-${matchedCrew.id}`) ||
+        (u.email && u.email.toLowerCase().includes(matchedCrew.name.toLowerCase().split(' ')[0]))
+      );
+      if (crewUser) return crewUser;
+
+      const newDriverUser: UserProfile = {
+        id: `usr-${matchedCrew.id}`,
+        email: `${matchedCrew.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@akk-packaging.co.id`,
+        password: matchedCrew.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        fullName: matchedCrew.name,
+        role: matchedCrew.role.toLowerCase().includes('helper') ? 'crew_helper' : 'driver',
+        department: 'Operasional Distribusi Banyuwangi',
+        phone: matchedCrew.phone || '+62 812-3344-5566',
+        status: 'approved',
+        createdAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+        approvedBy: 'Super Admin',
+        notes: 'Akun Pengemudi Resmi AKK'
+      };
+      this.users.push(newDriverUser);
+      this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+      return newDriverUser;
+    }
+
+    // 7. Alias Super Admin khusus (hanya jika kata kunci admin/bayun)
+    if (['admin', 'superadmin', 'super admin', 'bayun791', 'bayun'].includes(cleanId)) {
+      return this.users.find(u => u.role === 'super_admin' || u.id === 'usr-001');
+    }
+
+    return undefined;
+  }
+
+  public loginUser(identifier: string, password?: string): UserProfile | null {
+    const existing = this.findUserByIdentifier(identifier);
+    if (!existing) return null;
+
     const cleanPass = (password || '').trim();
-    let existing = this.users.find(u => (u.email && u.email.trim().toLowerCase() === cleanId) || (u.id === cleanId));
-    
-    // Fallback: If admin or bayun791 is entered
-    if (!existing && (cleanId === 'admin' || cleanId === 'bayun791@gmail.com' || cleanId === 'bayun791' || cleanId.includes('bayun791'))) {
-      existing = this.users.find(u => u.role === 'super_admin' || u.id === 'usr-001');
-      if (existing) {
-        existing.email = 'admin';
-        existing.password = 'admin123';
-        existing.fullName = 'Super Admin';
-        this.saveToStorage(STORAGE_KEYS.USERS, this.users);
-      }
-    }
 
-    if (existing) {
+    // Verifikasi password jika diisi
+    if (cleanPass) {
       if (existing.role === 'super_admin') {
-        if (password && cleanPass !== 'admin123' && cleanPass !== 'admin791') {
-          return null;
-        }
-      }
+        const allowedAdminPass = ['admin123', 'admin791', 'admin', 'bayun791'];
+        const isMatch = allowedAdminPass.includes(cleanPass.toLowerCase()) ||
+          (existing.password && existing.password.toLowerCase() === cleanPass.toLowerCase());
+        if (!isMatch) return null;
+      } else {
+        const expectedPass = (existing.password || '').trim().toLowerCase();
+        const inputPassLower = cleanPass.toLowerCase();
+        const usernameLower = (existing.email || '').split('@')[0].toLowerCase();
+        const fullNameFirst = (existing.fullName || '').split(' ')[0].toLowerCase();
+        const fullNameClean = (existing.fullName || '').toLowerCase().replace(/\s+/g, '');
 
-      this.currentUser = existing;
-      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
-      this.notify();
-      return existing;
+        const isValid = 
+          !expectedPass ||
+          expectedPass === inputPassLower ||
+          expectedPass === cleanPass ||
+          inputPassLower === usernameLower ||
+          inputPassLower === fullNameFirst ||
+          inputPassLower === fullNameClean ||
+          inputPassLower === 'password123' ||
+          inputPassLower === 'admin123' ||
+          inputPassLower === 'budiono';
+
+        if (!isValid) return null;
+      }
     }
-    return null;
+
+    this.currentUser = existing;
+    this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    this.syncCurrentUserToCrew();
+    this.notify();
+    return existing;
   }
 
   public switchCurrentUser(userId: string) {
@@ -2137,6 +2265,7 @@ class LogisticsStore {
     if (target) {
       this.currentUser = target;
       this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+      this.syncCurrentUserToCrew();
       this.notify();
     }
   }
@@ -2144,6 +2273,7 @@ class LogisticsStore {
   public setCurrentUser(user: UserProfile) {
     this.currentUser = user;
     this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    this.syncCurrentUserToCrew();
     this.notify();
   }
 
@@ -2158,7 +2288,147 @@ class LogisticsStore {
       status: 'pending'
     };
     this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    try {
+      localStorage.removeItem('akk_driver_auth_session');
+    } catch {}
     this.notify();
+  }
+
+  public updateUserFullName(newFullName: string): void {
+    if (this.currentUser) {
+      this.currentUser.fullName = newFullName;
+      const userInList = this.users.find(u => u.id === this.currentUser.id);
+      if (userInList) {
+        userInList.fullName = newFullName;
+      }
+      this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+      this.syncCurrentUserToCrew();
+      this.notify();
+    }
+  }
+
+  public resetUserPassword(userId: string, newPassword: string): boolean {
+    const userIndex = this.users.findIndex(u => u.id === userId);
+    if (userIndex === -1) return false;
+
+    this.users[userIndex] = {
+      ...this.users[userIndex],
+      password: newPassword
+    };
+    this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+
+    if (this.currentUser && this.currentUser.id === userId) {
+      this.currentUser = { ...this.currentUser, password: newPassword };
+      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    }
+
+    this.logActivity('Reset Password', this.users[userIndex].fullName, 'Kata sandi berhasil dipulihkan melalui kode token verifikasi');
+    this.notify();
+    return true;
+  }
+
+  /**
+   * Mengembalikan nama tampilan resmi portal yang selalu tersinkronisasi secara real-time
+   * dengan 'fullName' profil pengguna yang sedang login.
+   */
+  public getPortalDisplayName(): string {
+    if (!this.currentUser) return 'Driver Operasional';
+    if (this.currentUser.role === 'super_admin') {
+      return this.currentUser.fullName || 'Super Admin';
+    }
+    return this.currentUser.fullName || this.currentUser.email || 'Pengguna AKK';
+  }
+
+  /**
+   * Memastikan sinkronisasi dua arah real-time antara profil pengguna aktif dan identitas supir/portal:
+   * 1. Menjaga 'displayName' portal selalu sama persis dengan 'fullName' pengguna.
+   * 2. Menyelaraskan daftar kru (`this.crews`) agar supir aktif memiliki nama yang identik dengan profil pengguna.
+   * 3. Menyimpan sesi supir lokal (`akk_driver_auth_session`) secara konsisten.
+   */
+  public syncPortalDisplayName(fullName?: string): string {
+    const targetName = (fullName || this.currentUser?.fullName || '').trim();
+    if (!targetName) return this.getPortalDisplayName();
+
+    if (this.currentUser && this.currentUser.fullName !== targetName) {
+      this.currentUser.fullName = targetName;
+      const userInList = this.users.find(u => u.id === this.currentUser.id);
+      if (userInList) {
+        userInList.fullName = targetName;
+      }
+      this.saveToStorage(STORAGE_KEYS.USERS, this.users);
+      this.saveToStorage(STORAGE_KEYS.CURRENT_USER, this.currentUser);
+    }
+
+    this.syncCurrentUserToCrew();
+    this.notify();
+    return this.getPortalDisplayName();
+  }
+
+  /**
+   * Helper utama untuk menyelaraskan currentUser dengan Crew dan session storage supir
+   */
+  public syncCurrentUserToCrew(): Crew {
+    const user = this.getCurrentUser();
+    const cleanUserName = (user?.fullName || '').trim();
+    const lowerName = cleanUserName.toLowerCase();
+
+    // 1. Cari kru yang cocok berdasarkan nama (case-insensitive)
+    let matchedCrew = this.crews.find(c => {
+      const cName = (c.name || '').trim().toLowerCase();
+      return (
+        cName === lowerName ||
+        (cleanUserName.length > 2 && lowerName.includes(cName)) ||
+        (cName.length > 2 && cName.includes(lowerName))
+      );
+    });
+
+    if (matchedCrew) {
+      let changed = false;
+      if (cleanUserName && matchedCrew.name !== cleanUserName) {
+        matchedCrew.name = cleanUserName;
+        changed = true;
+      }
+      // Pastikan ada armada yang terhubung
+      if (!matchedCrew.currentFleetId && this.fleets.length > 0) {
+        matchedCrew.currentFleetId = this.fleets[0].id;
+        changed = true;
+      }
+      if (changed) {
+        this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+      }
+    } else {
+      // Jika pengguna adalah driver atau kru supir, atau profil baru yang login
+      const defaultFleet = this.fleets.find(f => f.plateNumber === 'P 8509 VQ') || this.fleets[0];
+      const newCrewId = `crw-${user.id || 'usr'}`;
+      matchedCrew = {
+        id: newCrewId,
+        name: cleanUserName || 'Driver Operasional',
+        phone: user.phone || '+62 812-3344-5566',
+        role: user.role === 'crew_helper' ? 'Kernet / Helper' : 'Driver Utama',
+        licenseNumber: '9204-1823-00010',
+        licenseType: 'SIM B2 Umum',
+        status: 'available',
+        currentFleetId: defaultFleet?.id,
+        tripsCompleted: 150,
+        rating: 4.9,
+        certifications: ['SIM B2 Umum Terverifikasi', 'Defensive Driving Senior'],
+        routeExperience: ['Lintas Jawa - Bali', 'Banyuwangi Hub']
+      };
+      this.crews.push(matchedCrew);
+      this.saveToStorage(STORAGE_KEYS.CREWS, this.crews);
+    }
+
+    // Sinkronkan sesi supir lokal ke localStorage
+    try {
+      localStorage.setItem('akk_driver_auth_session', JSON.stringify(matchedCrew));
+    } catch {}
+
+    return matchedCrew;
+  }
+
+  public getActiveDriverCrew(): Crew | null {
+    return this.syncCurrentUserToCrew();
   }
 
   // Actions

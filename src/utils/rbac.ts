@@ -1,22 +1,68 @@
-import { UserProfile } from '../types';
+import { UserProfile, UserRole } from '../types';
+
+export const isDispatcherRole = (role: UserRole | string): boolean => {
+  return role === 'spv_logistik' || role === 'dispatcher' || role === 'operasional';
+};
+
+export const isDriverRole = (role: UserRole | string): boolean => {
+  return role === 'driver' || role === 'crew_helper';
+};
+
+export const isSuperAdminRole = (role: UserRole | string): boolean => {
+  return role === 'super_admin';
+};
+
+export const getUserRoleDisplayTitle = (role: UserRole | string): string => {
+  switch (role) {
+    case 'super_admin':
+      return 'Super Administrator (Full Access)';
+    case 'spv_logistik':
+    case 'dispatcher':
+      return 'Dispatcher / SPV Logistik';
+    case 'driver':
+      return 'Driver / Pengemudi Utama';
+    case 'crew_helper':
+      return 'Kernet / Helper';
+    case 'sales_admin':
+      return 'Sales & Marketing Admin';
+    case 'finance_tax_admin':
+      return 'Finance & Tax Admin';
+    case 'warehouse_admin':
+      return 'Warehouse Administrator';
+    case 'security':
+      return 'Security & Gate Control';
+    default:
+      return 'Staf Operasional AKK';
+  }
+};
 
 export const canAccess = (user: UserProfile, moduleId: string, subMenuId?: string): boolean => {
   if (!user) return false;
-  if (user.role === 'super_admin') return true;
+  if (isSuperAdminRole(user.role)) return true;
   if (user.status !== 'approved') return false;
 
-  // Special check for Executive Dashboard ('dashboard') governed by user permissions under sistem_pengguna -> dashboard_eksekutif
-  if (moduleId === 'dashboard') {
-    if (user.permissions && user.permissions.modules) {
-      const sysMod = user.permissions.modules['sistem_pengguna'];
-      if (sysMod && sysMod.enabled) {
-        const sub = sysMod.subMenus?.['dashboard_eksekutif'];
-        if (sub && sub !== 'none') return true;
-        if (sub === 'none') return false;
-      }
+  const role = user.role;
+
+  // 1. Driver & Crew Role Boundaries: Restricted exclusively to driver portal & mobile operations
+  if (isDriverRole(role)) {
+    if (moduleId === 'driver_portal' || moduleId === 'logistics' || moduleId === 'crew_history') {
+      return true;
     }
-    // Default roles restriction for Executive Dashboard: Drivers, Helpers, Security, General Staff cannot view unless explicitly granted
-    if (user.role === 'driver' || user.role === 'crew_helper' || user.role === 'security') return false;
+    return false;
+  }
+
+  // 2. Dispatcher / SPV Logistik Role Boundaries: Operational logistics, scheduling, fleets, tracking, reports
+  if (isDispatcherRole(role)) {
+    // Restricted from Super Admin user management, system architecture, and finance configuration
+    if (['users', 'sistem_pengguna', 'architecture', 'finance_tax', 'finance_dashboard'].includes(moduleId)) {
+      return false;
+    }
+    return true;
+  }
+
+  // 3. Special check for Executive Dashboard ('dashboard')
+  if (moduleId === 'dashboard') {
+    if (isDriverRole(role) || role === 'security') return false;
     return true;
   }
 
@@ -32,27 +78,8 @@ export const canAccess = (user: UserProfile, moduleId: string, subMenuId?: strin
     return true;
   }
 
-  // Robust default role boundaries if explicit permissions object is not yet saved
-  if (user.role === 'driver') {
-    if ((moduleId === 'logistics' || moduleId === 'driver_portal') && (!subMenuId || subMenuId === 'portal_driver')) return true;
-    return false;
-  }
-
-  if (user.role === 'spv_logistik') {
-    // SPV has access to logistics operations and tracking, but restricted from user management & finance
-    if (moduleId === 'users' || moduleId === 'sistem_pengguna' || moduleId === 'architecture') return false;
-    if (moduleId === 'finance_tax' || moduleId === 'finance_dashboard') return false;
-    return true;
-  }
-
-  if (user.role === 'sales_admin') {
-    // Sales Admin restricted from system user approval and finance
-    if (moduleId === 'users' || moduleId === 'sistem_pengguna' || moduleId === 'architecture') return false;
-    if (moduleId === 'finance_tax' || moduleId === 'finance_dashboard') return false;
-    return true;
-  }
-
   return true;
 };
+
 
 
